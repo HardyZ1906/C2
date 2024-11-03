@@ -188,8 +188,12 @@ class CoCoCC {
         assert(false);
       }
       uint32_t depth = it.take(depth_bits_) + 1;
+    #ifdef __DEGREE_IN_PLACE__
       bool degree_in_place = it.take(1);
       uint32_t degree = (degree_in_place ? ds2i::read_delta(it) : topo_.degree(pos));
+    #else
+      uint32_t degree = topo_.degree(pos);
+    #endif
       assert(degree >= 1 + prefix_key);
       // read first code and local alphabet (if exists)
       code_t first_code, code;
@@ -314,7 +318,7 @@ class CoCoCC {
       }
     }
     code_t val;
-    while ((val = it.take(width)) < target) {
+    while ((val = macros_.get_bits(pos + left*width, width)) < target) {
       left++;
     }
     if (val == target) {
@@ -359,12 +363,14 @@ class CoCoCC {
     bv.append_bits(static_cast<uint64_t>(encoding), encoding_bits_);  // write encoding
     bv.append_bits(static_cast<uint64_t>(prefix_key), 1);  // write prefix key indicator
     bv.append_bits(static_cast<uint64_t>(depth - 1), depth_bits_);  // skip 0
+  #ifdef __DEGREE_IN_PLACE__
     if (degree < degree_threshold_) {  // search in topology
       bv.append_bits(static_cast<uint64_t>(0), 1);
     } else {  // store degree in place
       bv.append_bits(static_cast<uint64_t>(0), 1);
       ds2i::write_delta(bv, degree);
     }
+  #endif
   }
 
   // we don't write bit 0 as it is always reserved for terminator

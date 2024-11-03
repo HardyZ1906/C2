@@ -7,10 +7,13 @@
 #include <set>
 #include <vector>
 #include <chrono>
+#include <random>
 
 
 int main(int argc, char *argv[]) {
   assert(argc > 1);
+
+  uint32_t space_relaxation = argc == 3 ? std::atoi(argv[2]) : 0;
 
   std::string filename(argv[1]);
   std::ifstream file(filename);
@@ -28,7 +31,7 @@ int main(int argc, char *argv[]) {
 
   auto start = std::chrono::high_resolution_clock::now();
   CoCoOptimizer<std::string> optimizer(&trie);
-  optimizer.optimize();
+  optimizer.optimize(space_relaxation);
 #ifdef __DEBUG_OPTIMIZER__
   optimizer.print_optimal();
 #endif
@@ -37,10 +40,13 @@ int main(int argc, char *argv[]) {
   auto duration = (end - start).count();
   printf("build time: %lf ms\n", (double)duration/1000000);
 
+  constexpr int mb_bits = 1024*1024*8;
   auto [enc_cost, total_cost] = optimizer.get_final_cost();
-  printf("expected encoding cost: %ld, expected total cost: %ld\n", enc_cost, total_cost);
-  printf("actual encoding cost: %ld, actual total cost: %ld\n", coco.encoding_size(), coco.size_in_bits());
+  printf("expected encoding cost: %lf MB, expected total cost: %lf MB\n", (double)enc_cost/mb_bits, (double)total_cost/mb_bits);
+  printf("actual encoding cost: %lf MB, actual total cost: %lf MB\n", (double)coco.encoding_size()/mb_bits,
+         (double)coco.size_in_bits()/mb_bits);
 
+  std::shuffle(keys.begin(), keys.end(), std::mt19937{2});
   std::set<uint32_t> key_ids;
   start = std::chrono::high_resolution_clock::now();
   for (size_t i = 0; i < keys.size(); i += 1000) {

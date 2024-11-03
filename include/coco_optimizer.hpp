@@ -16,6 +16,8 @@
 # define DEBUG(foo)
 #endif
 
+// #define __DEGREE_IN_PLACE__
+
 
 template<typename Key>
 class CoCoOptimizer {
@@ -31,18 +33,29 @@ class CoCoOptimizer {
   static constexpr uint8_t terminator_ = 0;
   static constexpr uint32_t bv_block_sz_ = 1024;
   static constexpr uint32_t degree_threshold_ = 1 << 12;
+  // u/n must be below this value for elias-fano to be considered, following original design
+  static constexpr size_t max_ef_density_ = 1710000;
 
   using key_type = Key;
   using alphabet_t = Alphabet;
   using trie_t = LS4CoCo<key_type>;
 
   struct state_s {
-    alphabet_t remap_;  // local alphabet of optimal macro node
+    alphabet_t remap_{};  // local alphabet of optimal macro node
     size_t enc_cost_{0};   // optimal space cost of encoding
     uint32_t depth_{0};    // depth of optimal macro node
     uint32_t num_macros_{0};  // # of macro nodes in optimal subtrie
     uint32_t num_leaves_{0};  // # of leaf nodes in optimal subtrie
     encoding_t encoding_{encoding_t::COUNT};
+
+    auto operator=(const state_s &other) -> state_s & {
+      remap_ = other.remap_;
+      enc_cost_ = other.enc_cost_;
+      depth_ = other.depth_;
+      num_macros_ = other.num_macros_;
+      num_leaves_ = other.num_leaves_;
+      encoding_ = other.encoding_;
+    }
   };
 
   CoCoOptimizer(const trie_t *trie) : trie_(trie) {
@@ -55,18 +68,18 @@ class CoCoOptimizer {
     get_global_alphabet();
   }
 
-  void optimize() {
+  void optimize(uint32_t space_relaxation = 0) {
     assert(trie_ != nullptr);
 
     std::vector<uint32_t> levels = trie_->get_level_boundaries();
     // bottom-up optimization
     for (size_t i = levels.size() - 1; i > 0; i--) {
       uint32_t pos = levels[i-1];
-      DEBUG( printf("optimize level %d(%d:%d)\n", i - 1, levels[i-1], levels[i]); )
+      // DEBUG( printf("optimize level %d(%d:%d)\n", i - 1, levels[i-1], levels[i]); )
       uint32_t count = 0;
       while (pos < levels[i]) {  // optimize level
-        DEBUG( printf("optimize node %d\n", pos); )
-        optimize_node(pos);
+        // DEBUG( printf("optimize node %d\n", pos); )
+        optimize_node(pos, space_relaxation);
         pos = trie_->node_end(pos);
         count++;
       }
@@ -79,11 +92,12 @@ class CoCoOptimizer {
 
   // optimize node at position pos
   // @require: all descendents must have been optimized
-  void optimize_node(uint32_t pos) {
+  void optimize_node(uint32_t pos, uint32_t space_relaxation = 0) {
     uint32_t left = trie_->node_start(pos), right = trie_->node_end(pos) - 1;  // level boundaries
     uint32_t root_id = trie_->node_id(left);
-    state_s &state = states_[root_id];
-    // printf("optimize node %d:%d, %d\n", left, right, root_id);
+    state_s best_state;
+    state_s &relaxed_state = states_[root_id];
+    // DEBUG( printf("optimize node %d:%d, %d\n", left, right, root_id); )
 
     key_type min_key, max_key;  // universe
     bool min_key_found = false, max_key_found = false;
@@ -210,20 +224,33 @@ class CoCoOptimizer {
           best_enc_cost = enc_cost;
         }
       }
-      // TODO: space relaxation
       assert(best_encoding != encoding_t::COUNT);
       size_t enc_cost = best_enc_cost + desc_enc_cost;
       uint32_t num_macros = 1 + desc_num_macros;
       uint32_t num_leaves = num_full_keys + prefix_key + desc_num_leaves;
       size_t total_cost = space_cost_total(enc_cost, num_macros, num_leaves);
+      // DEBUG(
+      //   printf("depth %u: best cost = %lu, total cost = %lu, encoding = %u\n",
+      //          depth, best_cost, total_cost, static_cast<int>(best_encoding));
+      // )
       if (total_cost <= best_cost) {
         best_cost = total_cost;
-        state.encoding_ = best_encoding;
-        state.depth_ = depth;
-        state.enc_cost_ = enc_cost;
-        state.num_macros_ = num_macros;
-        state.num_leaves_ = num_leaves;
-        state.remap_ = remap;
+        best_state.encoding_ = best_encoding;
+        best_state.depth_ = depth;
+        best_state.enc_cost_ = enc_cost;
+        best_state.num_macros_ = num_macros;
+        best_state.num_leaves_ = num_leaves;
+        best_state.remap_ = remap;
+        // DEBUG( printf("update best state\n"); )
+      }
+      if (100*total_cost <= (100 + space_relaxation)*best_cost) {
+        relaxed_state.encoding_ = best_encoding;
+        relaxed_state.depth_ = depth;
+        relaxed_state.enc_cost_ = enc_cost;
+        relaxed_state.num_macros_ = num_macros;
+        relaxed_state.num_leaves_ = num_leaves;
+        relaxed_state.remap_ = remap;
+        // DEBUG( printf("update relaxed state\n"); )
       }
 
       // move to next level
@@ -234,7 +261,7 @@ class CoCoOptimizer {
       right = next_level_right;
       depth++;
     }
-    assert(state.encoding_ != encoding_t::COUNT);
+    assert(states_[root_id].encoding_ != encoding_t::COUNT);
   }
 
 #ifdef __DEBUG_OPTIMIZER__
@@ -247,8 +274,10 @@ class CoCoOptimizer {
       queue.pop();
       uint32_t node_id = trie_->node_id(pos);
       state_s &state = states_[node_id];
-      printf("macro node %d: encoding = %d, depth = %d, cost = %ld\n", macro_node_id, state.encoding_,
-             state.depth_, space_cost_total(state));
+      DEBUG(
+        printf("macro node %d: encoding = %d, depth = %d, cost = %ld\n", macro_node_id, state.encoding_,
+               state.depth_, space_cost_total(state));
+      )
       macro_node_id++;
       typename trie_t::walker left_walker(trie_, pos), right_walker(trie_, pos);
       right_walker.move_to_back();
@@ -364,18 +393,30 @@ class CoCoOptimizer {
   auto space_cost_elias_fano(code_t universe, uint32_t code_len,
                              uint32_t num_keys, bool prefix_key) const -> size_t {
     assert(num_keys > 1);
+    if (universe / num_keys >= max_ef_density_) {
+      return std::numeric_limits<size_t>::max();
+    }
+  #ifdef __DEGREE_IN_PLACE__
     uint32_t degree = num_keys + prefix_key;
     if (degree < degree_threshold_) {
       return encoding_bits_ + depth_bits_ + 2 + code_len + space_cost_delta(universe) +
              ds2i::compact_elias_fano<code_t>::bitsize(params, universe, num_keys - 1);
     }  // otherwise there are too many keys; we store degree in place to avoid slow `next1`
     return encoding_bits_ + depth_bits_ + 2 + space_cost_delta(degree) + code_len +
-           space_cost_delta(universe) + ds2i::compact_elias_fano<code_t>::bitsize(params, universe, num_keys);
+           space_cost_delta(universe) + ds2i::compact_elias_fano<code_t>::bitsize(params, universe, num_keys - 1);
+  #else
+    return encoding_bits_ + depth_bits_ + 1 + code_len + space_cost_delta(universe) +
+           ds2i::compact_elias_fano<code_t>::bitsize(params, universe, num_keys - 1);
+  #endif
   }
 
   // elias fano encoding + alphabet size
   auto space_cost_elias_fano_remap(code_t universe, uint32_t code_len,
                                    uint32_t num_keys, bool prefix_key) const -> size_t {
+    size_t cost = space_cost_elias_fano(universe, code_len, num_keys, prefix_key);
+    if (cost == std::numeric_limits<size_t>::max()) {
+      return std::numeric_limits<size_t>::max();
+    }
     return space_cost_elias_fano(universe, code_len, num_keys, prefix_key) + alphabet_.alphabet_size() - 1;
   }
 
@@ -384,11 +425,15 @@ class CoCoOptimizer {
                          uint32_t num_keys, bool prefix_key) const -> size_t {
     assert(num_keys > 1);
     uint32_t width = log2_ceil(universe);  // skip 0
+  #ifdef __DEGREE_IN_PLACE__
     uint32_t degree = num_keys + prefix_key;
     if (degree < degree_threshold_) {
       return encoding_bits_ + depth_bits_ + 2 + code_len + width*(num_keys - 1);
     }
     return encoding_bits_ + depth_bits_ + 2 + space_cost_delta(degree) + code_len + width*(num_keys - 1);
+  #else
+    return encoding_bits_ + depth_bits_ + 1 + code_len + width*(num_keys - 1);
+  #endif
   }
 
   // packed encoding + local alphabet
@@ -405,11 +450,15 @@ class CoCoOptimizer {
       return std::numeric_limits<size_t>::max();
     }
     size_t index_sz = log2_ceil(num_keys - 1) * (universe / bv_block_sz_);  // skip 0
+  #ifdef __DEGREE_IN_PLACE__
     uint32_t degree = num_keys + prefix_key;
     if (degree < degree_threshold_) {
       return encoding_bits_ + depth_bits_ + 2 + code_len + index_sz + static_cast<size_t>(universe);
     }
     return encoding_bits_ + depth_bits_ + 2 + space_cost_delta(degree) + code_len + index_sz + static_cast<size_t>(universe);
+  #else
+    return encoding_bits_ + depth_bits_ + 1 + code_len + index_sz + static_cast<size_t>(universe);
+  #endif
   }
 
   // bitvector encoding + local alphabet
@@ -428,11 +477,15 @@ class CoCoOptimizer {
     if (universe > std::numeric_limits<uint32_t>::max() || static_cast<uint32_t>(universe) != num_keys) {
       return std::numeric_limits<size_t>::max();
     }
+  #ifdef __DEGREE_IN_PLACE__
     uint32_t degree = num_keys + prefix_key;
     if (degree < degree_threshold_) {
-      return encoding_bits_ + depth_bits_ + 1 + code_len;
+      return encoding_bits_ + depth_bits_ + 2 + code_len;
     }  // otherwise there are too many keys; we store degree in place to avoid slow `next1`
-    return encoding_bits_ + depth_bits_ + 1 + space_cost_delta(degree) + code_len;
+    return encoding_bits_ + depth_bits_ + 2 + space_cost_delta(degree) + code_len;
+  #else
+    return encoding_bits_ + depth_bits_ + 1 + code_len;
+  #endif
   }
 
   // dense encoding + local alphabet
