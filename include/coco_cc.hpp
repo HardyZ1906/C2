@@ -37,14 +37,24 @@ class CoCoCC {
   static constexpr uint32_t bv_block_sz_ = optimizer::bv_block_sz_;
   static constexpr uint8_t terminator_ = 0;
 
+  CoCoCC() = default;
+
   CoCoCC(const optimizer &opt) {
+    build(opt);
+  }
+
+  template<typename Iterator>
+  void build(Iterator begin, Iterator end) {
+    typename optimizer::trie_t trie;
+    trie.build(begin, end);
+    optimizer opt(&trie);
     build(opt);
   }
 
   void build(const optimizer &opt) {
     alphabet_ = opt.alphabet_;
     topo_.reserve(opt.states_[0].num_macros_ + opt.states_[0].num_leaves_);
-    ptrs_.resize(opt.states_[0].num_macros_);
+    ptrs_.resize(opt.states_[0].num_macros_ + 1);
 
     succinct::bit_vector_builder bv;
 
@@ -52,7 +62,7 @@ class CoCoCC {
     queue.push(0);
 
     auto push_child = [&](uint32_t pos) {
-      if (opt.trie_->bv_.template get<0>(pos)) {
+      if (opt.trie_->has_child(pos)) {
         queue.push(opt.trie_->child_pos(pos));
       } else {
         queue.push(-1);
@@ -83,7 +93,8 @@ class CoCoCC {
       uint32_t depth = state.depth_;
 
       DEBUG(
-        printf("macro node %d: pos = %d, depth = %d, encoding = %d, ptr = %ld\n", macro_id - 1, pos, depth, encoding, bv.size());
+        printf("macro node %d: pos = %d, depth = %d, encoding = %d, ptr = %ld, expected cost = %ld, total cost = %ld\n",
+               macro_id - 1, pos, depth, encoding, bv.size(), state.self_enc_cost_, state.enc_cost_);
         uint32_t key_idx = 0;
         if (prefix_key) {
           printf("key %d: (null)\n", key_idx++);
@@ -94,12 +105,24 @@ class CoCoCC {
       typename optimizer::trie_t::walker walker(opt.trie_, pos);
       walker.get_min_key(depth);
       push_child(walker.pos_);
+
+      if (encoding == encoding_t::UNARY_PATH || encoding == encoding_t::UP_REMAP) {
+        assert(!prefix_key);
+        bv.append_bits(static_cast<uint64_t>(encoding), encoding_bits_);
+        if (encoding == encoding_t::UNARY_PATH) {
+          encode_unary_path(bv, walker.key());
+        } else {
+          write_alphabet(bv, state.remap_);
+          encode_unary_path_remap(bv, walker.key(), state.remap_);
+        }
+        topo_.add_node(1);
+        DEBUG( printf("key %d: %s\n", key_idx++, walker.key().c_str()); )
+        continue;
+      }
+
       code_t first_code;
       std::vector<code_t> codes;
-      if (encoding == encoding_t::RECURSIVE) {
-        printf("not implemented\n");
-        assert(false);
-      } else if (!(static_cast<int>(encoding) & 0x4)) {  // no remap
+      if (!(static_cast<int>(encoding) & 0x4)) {  // no remap
         DEBUG( printf("key %d: %s\n", key_idx++, walker.key().c_str()); )
         first_code = encode(walker.key(), 0, depth);
         while (walker.next(depth)) {
@@ -150,11 +173,11 @@ class CoCoCC {
        case encoding_t::DE_REMAP:
         // do nothing, as encoding is implied in metadata and the first code
         break;
-       case encoding_t::RECURSIVE:
        default: assert(false); // should not happen
       }
       topo_.add_node(codes.size() + 1 + prefix_key);  // update topology
     }
+    ptrs_[macro_id] = bv.size();  // sentinel
     DEBUG( printf("final encoding cost: %ld\n", bv.size()); )
     topo_.build();
     sdsl::util::bit_compress(ptrs_);
@@ -177,15 +200,32 @@ class CoCoCC {
       }
       uint32_t macro_id = topo_.macro_id(pos);
       succinct::bit_vector::enumerator it(macros_, ptrs_[macro_id]);
-      // read metadata
+      size_t next = ptrs_[macro_id + 1];
       encoding_t encoding = static_cast<encoding_t>(it.take(encoding_bits_));
+      Alphabet remap;
+
+      if (encoding == encoding_t::UNARY_PATH || encoding == encoding_t::UP_REMAP) {
+        assert(topo_.degree(pos) == 1);
+        uint32_t depth;
+        if (encoding == encoding_t::UNARY_PATH) {
+          if ((depth = match_unary_path(it, key, idx, next)) == -1) {
+            return -1;
+          }
+        } else {  // UP_REMAP
+          read_alphabet(it, remap);
+          if ((depth = match_unary_path_remap(it, key, remap, idx, next)) == -1) {
+            return -1;
+          }
+        }
+        idx += depth;
+        pos = topo_.child_pos(pos);
+        continue;
+      }
+
+      // read metadata
       bool prefix_key = it.take(1);
       if (idx >= end) {
         return prefix_key ? topo_.leaf_id(topo_.child_pos(pos)) : -1;
-      }
-      if (encoding == encoding_t::RECURSIVE) {
-        printf("not implemented\n");
-        assert(false);
       }
       uint32_t depth = it.take(depth_bits_) + 1;
     #ifdef __DEGREE_IN_PLACE__
@@ -195,9 +235,8 @@ class CoCoCC {
       uint32_t degree = topo_.degree(pos);
     #endif
       assert(degree >= 1 + prefix_key);
-      // read first code and local alphabet (if exists)
+      // read first code
       code_t first_code, code;
-      Alphabet remap;
       if (!(static_cast<int>(encoding) & 0x4)) {  // no remap
         code = encode(key, idx, depth);
         first_code = it.take(optimizer::code_len(alphabet_, depth));
@@ -213,26 +252,24 @@ class CoCoCC {
       } else if (code == first_code) {
         child_id = prefix_key;
       } else {  // search encoding
-        size_t next = macro_id == ptrs_.size() - 1 ? macros_.size() : ptrs_[macro_id + 1];
         code_t target = code - first_code - 1;
         switch (encoding) {
          case encoding_t::ELIAS_FANO:
          case encoding_t::EF_REMAP:
-          child_id = search_elias_fano(it, prefix_key, degree - prefix_key - 1, target);
+          child_id = match_elias_fano(it, prefix_key, degree - prefix_key - 1, target);
           break;
          case encoding_t::PACKED:
          case encoding_t::PA_REMAP:
-          child_id = search_packed(it, prefix_key, degree - prefix_key - 1, next, target);
+          child_id = match_packed(it, prefix_key, degree - prefix_key - 1, next, target);
           break;
          case encoding_t::BITVECTOR:
          case encoding_t::BV_REMAP:
-          child_id = search_bitvector(it, prefix_key, degree - prefix_key - 1, next, target);
+          child_id = match_bitvector(it, prefix_key, degree - prefix_key - 1, next, target);
           break;
          case encoding_t::DENSE:
          case encoding_t::DE_REMAP:
-          child_id = search_dense(it, prefix_key, degree - prefix_key - 1, target);
+          child_id = match_dense(it, prefix_key, degree - prefix_key - 1, target);
           break;
-         case encoding_t::RECURSIVE:
          default: assert(false); // should not happen
         }
       }
@@ -251,6 +288,10 @@ class CoCoCC {
 
   auto size_in_bits() const -> size_t {
     return topo_.size_in_bits() + sdsl::size_in_bytes(ptrs_)*8 + macros_.size();
+  }
+
+  auto get_num_nodes() const -> std::pair<uint32_t, uint32_t> {
+    return {topo_.num_macros(), topo_.num_leaves()};
   }
  private:
   void encode_elias_fano(succinct::bit_vector_builder &bv, const std::vector<code_t> &codes) {
@@ -291,8 +332,26 @@ class CoCoCC {
     }
   }
 
-  auto search_elias_fano(succinct::bit_vector::enumerator &it, bool prefix_key,
-                         uint32_t num_codes, code_t target) const -> uint32_t {
+  void encode_unary_path(succinct::bit_vector_builder &bv, const key_type &key) {
+    size_t encoded_len = 0;
+    uint32_t label_width = log2_ceil(alphabet_.alphabet_size());
+    for (uint32_t i = 0; i < key.size(); i++) {
+      auto label = encode(key[i]);
+      bv.append_bits(static_cast<uint64_t>(label), label_width);
+    }
+  }
+
+  void encode_unary_path_remap(succinct::bit_vector_builder &bv, const key_type &key, const Alphabet &remap) {
+    size_t encoded_len = 0;
+    uint32_t label_width = log2_ceil(remap.alphabet_size());
+    for (uint32_t i = 0; i < key.size(); i++) {
+      auto label = encode(key[i], remap);
+      bv.append_bits(static_cast<uint64_t>(label), label_width);
+    }
+  }
+
+  auto match_elias_fano(succinct::bit_vector::enumerator &it, bool prefix_key,
+                        uint32_t num_codes, code_t target) const -> uint32_t {
     code_t universe = ds2i::read_delta(it);
     typename ds2i::compact_elias_fano<code_t>::enumerator enu(macros_, it.position(), universe, num_codes, params);
     auto result = enu.next_geq(target);
@@ -302,8 +361,8 @@ class CoCoCC {
     return -1;
   }
 
-  auto search_packed(succinct::bit_vector::enumerator &it, bool prefix_key, uint32_t num_codes,
-                     size_t next, code_t target) const -> uint32_t {
+  auto match_packed(succinct::bit_vector::enumerator &it, bool prefix_key, uint32_t num_codes,
+                    size_t next, code_t target) const -> uint32_t {
     assert((next - it.position()) % num_codes == 0);
     size_t pos = it.position();
     uint32_t width = (next - pos) / num_codes;
@@ -327,14 +386,17 @@ class CoCoCC {
     return -1;
   }
 
-  auto search_bitvector(succinct::bit_vector::enumerator &it, bool prefix_key, uint32_t num_codes,
-                        size_t next, code_t target) const -> uint32_t {
+  auto match_bitvector(succinct::bit_vector::enumerator &it, bool prefix_key, uint32_t num_codes,
+                       size_t next, code_t target) const -> uint32_t {
     size_t pos = it.position();
     uint32_t idx_width = width_in_bits(num_codes);
     size_t len = next - pos;
     size_t num_blocks = len / (idx_width + bv_block_sz_);
     size_t bv_start = pos + idx_width*num_blocks;
     code_t universe = next - bv_start;
+    if (target >= universe) {
+      return -1;
+    }
     size_t target_pos = bv_start + target;
     uint32_t block_idx = target / bv_block_sz_;
     if (macros_[target_pos]) {
@@ -349,12 +411,52 @@ class CoCoCC {
     return -1;
   }
 
-  auto search_dense(succinct::bit_vector::enumerator &it, bool prefix_key,
-                    uint32_t num_codes, code_t target) const -> uint32_t {
+  auto match_dense(succinct::bit_vector::enumerator &it, bool prefix_key,
+                   uint32_t num_codes, code_t target) const -> uint32_t {
     if (target < num_codes) {
       return target + 1 + prefix_key;
     }
     return -1;
+  }
+
+  // returns the number of matched labels on success and -1 on failure
+  auto match_unary_path(succinct::bit_vector::enumerator &it, const key_type &key,
+                        uint32_t beg, size_t next) const -> uint32_t {
+    uint32_t matched_len = 0;
+    uint32_t label_width = log2_ceil(alphabet_.alphabet_size());
+    while (it.position() < next) {
+      auto label = it.take(label_width);
+      if (label == terminator_) {
+        // TODO: recursive encoding
+        assert(false);
+        continue;
+      } else if (label != encode(key[beg + matched_len])) {
+        return -1;
+      } else {
+        matched_len++;
+      }
+    }
+    return matched_len;
+  }
+
+  // returns the number of matched labels; if not matched, returns -1
+  auto match_unary_path_remap(succinct::bit_vector::enumerator &it, const key_type &key,
+                              const Alphabet &remap, uint32_t beg, size_t next) const -> uint32_t {
+    uint32_t matched_len = 0;
+    uint32_t label_width = log2_ceil(remap.alphabet_size());
+    while (it.position() < next) {
+      auto label = it.take(label_width);
+      if (label == terminator_) {
+        // TODO: recursive encoding
+        assert(false);
+        continue;
+      } else if (label != encode(key[beg + matched_len], remap)) {
+        return -1;
+      } else {
+        matched_len++;
+      }
+    }
+    return matched_len;
   }
 
   void write_metadata(succinct::bit_vector_builder &bv, encoding_t encoding, bool prefix_key,
@@ -407,6 +509,14 @@ class CoCoCC {
       remap.bits_[i] = it.take(alphabet_size);
     }
     remap.build_index();
+  }
+
+  auto encode(uint8_t label) const -> uint8_t {
+    return alphabet_.encode(label);
+  }
+
+  auto encode(uint8_t label, const Alphabet &remap) const -> uint8_t {
+    return remap.encode(alphabet_.encode(label));
   }
 
   // encode key using the global alphabet
@@ -481,6 +591,8 @@ class CoCoCC {
   LoudsCC<> topo_;
   sdsl::int_vector<> ptrs_;
   succinct::bit_vector macros_;  // macro node encoding
+
+  template<typename K> friend class CoCoRecursive;
 };
 
 #undef DEBUG

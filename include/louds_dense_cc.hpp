@@ -4,14 +4,6 @@
 #include "bit_vector_builder.hpp"
 
 
-#ifdef __BENCH_LD__
-# define BENCH_LD(foo) foo
-# include <chrono>
-#else
-# define BENCH_LD(foo)
-#endif
-
-
 // louds dense encoding, but with optimized layout
 // @require: label 0 is reserved for terminator
 template<typename Key, int cutoff, int fanout = 256>
@@ -25,11 +17,11 @@ class LoudsDenseCC {
   static constexpr int fanout_ = fanout;
   static constexpr int cutoff_ = cutoff;
   static constexpr int node_blocks_ = (fanout_ + 63) / 64;
-  static constexpr size_t invalid_offset_ = std::numeric_limits<size_t>::max();
+  static constexpr uint32_t invalid_offset_ = std::numeric_limits<uint32_t>::max();
 
   LoudsDense() = default;
 
-  void build(FstCCBuilder &builder) {
+  void build(FstBuilder &builder) {
     clear();
 
     depth_ = builder.d_labels_.size();
@@ -37,13 +29,13 @@ class LoudsDenseCC {
       return;
     }
 
-    size_t size = 0;
+    uint32_t size = 0;
     for (const auto &labels : builder.d_labels_) {
       size += labels.size();
     }
     bv_.reserve(size);
 
-    for (size_t i = 0; i < builder.d_labels_.size(); i++) {
+    for (uint32_t i = 0; i < builder.d_labels_.size(); i++) {
       bv_.load_bits(builder.d_labels_[i].bits(), builder.d_has_child_[i].bits(), 0, builder.d_labels_[i].size());
     }
     bv_.build();
@@ -57,7 +49,7 @@ class LoudsDenseCC {
   // try getting a key; if matched, `pos` returns the value position (LOUDS ID)
   // if partially matched, returns the node ID in the next level;
   // else returns `invalid_offset_`
-  auto get(const key_type &key, size_t &pos) const -> bool {
+  auto get(const key_type &key, uint32_t &pos) const -> bool {
     uint16_t len = key.size(), matched_len = 0;
     pos = 0;
 
@@ -99,11 +91,11 @@ class LoudsDenseCC {
  private:
   // given a node position, return position of the associated value
   // @require: has_child_.get(pos) == 0
-  auto value_pos(size_t pos) const -> size_t {
+  auto value_pos(uint32_t pos) const -> uint32_t {
     return bv_.rank1<0>(pos) - bv_.rank1<1>(pos);
   }
 
-  auto child_pos(size_t pos) const -> size_t {
+  auto child_pos(uint32_t pos) const -> uint32_t {
     return bv_.rank1<1>(pos + 1) * fanout_;
   }
 
@@ -154,32 +146,18 @@ class LoudsDenseCC {
 
     uint32_t rank_[2]{0};
 
-  #ifdef __MICROBENCH_LD__
-    static size_t get_time_;
-    static size_t rank_time_;
-
-    static void print_microBENCH_LD() {
-      printf("[STATIC BITVECTOR MICROBENCH_LD]\n");
-      printf("get: %lf ms; rank: %lf ms\n",c(double)get_time_/1000000, (double)rank_time_/1000000);
-    }
-
-    static void clear_microBENCH_LD() {
-      get_time_ = rank_time_ = 0;
-    }
-  #endif
-
     BitVector() = default;
 
     ~BitVector() {
       free(blocks_);
     }
 
-    auto size() const -> size_t {
+    auto size() const -> uint32_t {
       return size_;
     }
 
     template<int bvnum>
-    auto rank1() const -> size_t {
+    auto rank1() const -> uint32_t {
       static_assert(bvnum == 0 || bvnum == 1);
       return rank_[bvnum];
     }
@@ -200,7 +178,7 @@ class LoudsDenseCC {
       }
     }
 
-    void load_bits(const uint64_t *bits0, const uint64_t *bits1, size_t start, size_t size) {
+    void load_bits(const uint64_t *bits0, const uint64_t *bits1, uint32_t start, uint32_t size) {
       if (size_ + size > capacity_) {
         capacity_ = std::max<uint32_t>(((size_ + size) * 2 + 255) / 256 * 256, 256 * 8);
         blocks_ = reinterpret_cast<Block *>(realloc(blocks_, sizeof(Block) * (capacity_ / 256 + 1)));
@@ -214,7 +192,7 @@ class LoudsDenseCC {
         return;
       }
 
-      size_t end = start + size;
+      uint32_t end = start + size;
       copy_bits(blocks_[size_/256].bits0_, size_ % 256, bits0, start, leftover);
       copy_bits(blocks_[size_/256].bits1_, size_ % 256, bits1, start, leftover);
       size_ += leftover;
@@ -268,33 +246,27 @@ class LoudsDenseCC {
 
     // get the `pos`-th bit
     template<int bvnum>
-    auto get(size_t pos) const -> bool {
+    auto get(uint32_t pos) const -> bool {
       static_assert(bvnum == 0 || bvnum == 1);
       assert(pos < size_);
 
-      BENCH_LD( auto start_time = std::chrono::high_resolution_clock::now(); )
       bool ret;
       if constexpr (bvnum == 0) {
         ret = GET_BIT(blocks_[pos/256].bits0_[(pos%256)/64], pos%64);
       } else {
         ret = GET_BIT(blocks_[pos/256].bits1_[(pos%256)/64], pos%64);
       }
-      BENCH_LD(
-        auto end_time = std::chrono::high_resolution_clock::now();
-        get_time_ += (end_time - start_time).count();
-      )
       return ret;
     }
 
     // compute the rank of the first `size` bits
     template<int bvnum>
-    auto rank1(size_t size) const -> size_t {
+    auto rank1(uint32_t size) const -> uint32_t {
       static_assert(bvnum == 0 || bvnum == 1);
       assert(size <= size_);
 
-      BENCH_LD( auto start_time = std::chrono::high_resolution_clock::now(); )
       const auto &block = blocks_[size / 256];
-      size_t ret;
+      uint32_t ret;
       if constexpr (bvnum == 0) {
         ret = block.rank0_ + block.subrank0_[(size%256)/64] +
               __builtin_popcountll(block.bits0_[(size%256)/64] & MASK(size%64));
@@ -302,17 +274,13 @@ class LoudsDenseCC {
         ret = block.rank1_ + block.subrank1_[(size%256)/64] +
               __builtin_popcountll(block.bits1_[(size%256)/64] & MASK(size%64));
       }
-      BENCH_LD(
-        auto end_time = std::chrono::high_resolution_clock::now();
-        rank_time_ += (end_time - start_time).count();
-      )
       return ret;
     }
 
     // return the position of the closest 1 bit after position `pos` (inclusive)
     // if not found, return `size_`
     template<int bvnum>
-    auto next1(size_t pos) const -> size_t {
+    auto next1(uint32_t pos) const -> uint32_t {
       static_assert(bvnum == 0 || bvnum == 1);
 
       if (pos >= size_) {
@@ -354,5 +322,3 @@ class LoudsDenseCC {
     }
   };
 };
-
-#undef BENCH_LD

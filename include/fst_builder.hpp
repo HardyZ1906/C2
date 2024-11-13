@@ -8,7 +8,7 @@
 
 
 template<typename Key, int fanout = 256, int cutoff = 0>
-class FstCCBuilder {
+class FstBuilder {
  public:
   using key_type = Key;
   using bv_builder = BitVectorBuilder;
@@ -17,7 +17,9 @@ class FstCCBuilder {
   static constexpr int cutoff_ = cutoff;
   static constexpr uint8_t terminator_ = 0;
 
-  // keys must be sorted
+  FstBuilder() = default;
+
+  // keys must be sorted and unique
   template<typename Iterator>
   void build(Iterator begin, Iterator end) {
     // initialize an empty root node
@@ -197,4 +199,5 @@ class FstCCBuilder {
   template<typename K, int c, int f> friend class LoudsDenseCC;
   template<typename K, int c> friend class LoudsSparseCC;
   template<typename K> friend class LS4CoCo;
+  template<typename K> friend class LS4CoCoRecursive; 
 };

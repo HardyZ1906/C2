@@ -1,136 +1,17 @@
 #pragma once
 
 #include "utils.hpp"
-#include "fst_cc_builder.hpp"
+#include "fst_builder.hpp"
 #include "static_vector.hpp"
 
 #include <limits>
-
-
-#ifdef __BENCH_LS__
-# define BENCH_LS(foo) foo
-# include <chrono>
-#else
-# define BENCH_LS(foo)
-#endif
+#include <type_traits>
 
 
 // louds-sparse encoding, but with optimized layout
 // 8 bits per label
 template<typename Key, int cutoff>
 class LoudsSparseCC {
- public:
-  struct BitVector;
-
-  using key_type = Key;
-  using bitvec = BitVector;
-  using label_vec = StaticVector<uint8_t>;
-
-  static constexpr uint8_t terminator_ = 0;
-  static constexpr int cutoff_ = cutoff;
-  static constexpr size_t invalid_offset_ = std::numeric_limits<size_t>::max();
-
-  LoudsSparseCC() = default;
-
-  void build(FstCCBuilder &builder) {
-    clear();
-
-    depth_ = builder.s_labels_.size();
-    if (depth_ == 0) {
-      clear();
-      return;
-    }
-
-    size_t size = 0;
-    for (const auto &labels : builder.s_labels_) {
-      size += labels.size();
-    }
-
-    labels_.reserve(size);
-    bv_.reserve(size);
-
-    for (const auto &labels : builder.s_labels_) {
-      for (auto label : labels) {
-        labels_.emplace_back(label);
-      }
-    }
-
-    for (int i = 0; i < builder.s_has_child_.size(); i++) {
-      bv_.load_bits(builder.s_has_child_[i].bits(), builder.s_louds_[i].bits(), 0, builder.s_has_child_[i].size());
-    }
-    bv_.build(256, builder.rank_first_ls_level());
-  }
-
-  void clear() {
-    depth_ = offset_ = 0;
-    labels_.clear();
-    bv_.clear();
-  }
-
-  auto get(const key_type &key, size_t start_node_num) const -> size_t {
-    if (depth_ == 0) {
-      return invalid_offset_;
-    }
-
-    uint16_t len = key.size(), matched_len = cutoff_;
-    size_t pos = bv_.select1(start_node_num + 1);
-
-    while (matched_len < len) {
-      // locate the end of current node
-      size_t end = node_end(pos);
-      // search for label
-      pos = labels_.find(key[matched_len], pos, end);
-      if (pos == end) {  // mismatch
-        return invalid_offset_;
-      }
-      assert(labels_.at(pos) == key[matched_len]);
-
-      if (!bv_.get<0>(pos)) {  // branch terminates
-        return value_pos(pos);
-      }
-
-      // trace down child pointer
-      pos = child_pos(pos);
-      matched_len++;
-    }
-
-    if (labels_.at(pos) == terminator_) {  // matched as a prefix key
-      return value_pos(pos);
-    }
-    return invalid_offset_;
-  }
-
- private:
-  auto node_start(size_t pos) const -> size_t {
-    return bv_.prev1<1>(pos);
-  }
-
-  auto node_end(size_t pos) const -> size_t {
-    return bv_.next1<1>(pos + 1);
-  }
-
-  auto value_pos(size_t pos) const -> size_t {
-    return pos - bv_.rank1<0>(pos);
-  }
-
-  auto child_pos(size_t pos) const -> size_t {
-    return bv_.rs<1>(pos);
-  }
-
-  // 8 bits per label; indicates valid branches at each node, in level order
-  // labels belonging to the same node are sorted in ascending order
-  label_vec labels_;
-
-  // 2 bits per label; packed has-child and louds
-  bitvec bv_;
-
-  // since LOUDS-Sparse may not start from the first level, we need to add an offset of `# missing children - # missing nodes`
-  size_t offset_;
-
-  uint16_t depth_;
-
-  friend class FstCC;
-
  private:
   struct BitVector {
     struct Block {  // packed has-child and louds bitvectors
@@ -251,12 +132,12 @@ class LoudsSparseCC {
       free(sample_);
     }
 
-    auto size() const -> size_t {
+    auto size() const -> uint32_t {
       return size_;
     }
 
     template<int bvnum>
-    auto rank1() const -> size_t {
+    auto rank1() const -> uint32_t {
       static_assert(bvnum == 0 || bvnum == 1);
       return rank_[bvnum];
     }
@@ -276,7 +157,7 @@ class LoudsSparseCC {
       free(sample_);
 
       sample_rate_ = sample_rate;
-      if (sample_rate == 0) {
+      if (cutoff_ == 0 || sample_rate == 0) {
         sample_ = nullptr;
         return;
       }
@@ -299,7 +180,7 @@ class LoudsSparseCC {
     }
 
     void init_select() {
-      int num_blocks = (size_ + 255) / 256;
+      int num_blocks = capacity_ / 256;
 
       // build select index for bv<1>
       uint32_t i = 0, j = 0;
@@ -327,7 +208,7 @@ class LoudsSparseCC {
       }
     }
 
-    void load_bits(const uint64_t *bits0, const uint64_t *bits1, size_t start, size_t size) {
+    void load_bits(const uint64_t *bits0, const uint64_t *bits1, size_t start, uint32_t size) {
       if (size_ + size > capacity_) {
         capacity_ = std::max<uint32_t>(((size_ + size) * 2 + 255) / 256 * 256, 256 * 8);
         blocks_ = reinterpret_cast<Block *>(realloc(blocks_, sizeof(Block) * (capacity_ / 256 + 1)));
@@ -355,6 +236,11 @@ class LoudsSparseCC {
       copy_bits(blocks_[size_/256].bits0_, size_ % 256, bits0, start, end - start);
       copy_bits(blocks_[size_/256].bits1_, size_ % 256, bits1, start, end - start);
       size_ += end - start;
+    }
+
+    std::enable_if_t<cutoff_ == 0>
+    void build() {
+      build(0, 0);
     }
 
     void build(uint32_t sample_rate, uint32_t louds_first_level_rank) {
@@ -397,43 +283,30 @@ class LoudsSparseCC {
 
     // get the `pos`-th bit
     template<int bvnum>
-    auto get(size_t pos) const -> bool {
+    auto get(uint32_t pos) const -> bool {
       static_assert(bvnum == 0 || bvnum == 1);
       assert(pos < size_);
-
-      BENCH_LS( auto start_time = std::chrono::high_resolution_clock::now(); )
       bool ret = blocks_[pos/256].get(pos % 256);
-      BENCH_LS(
-        auto end_time = std::chrono::high_resolution_clock::now();
-        get_time_ += (end_time - start_time).count();
-      )
       return ret;
     }
 
     // `bvnum` must be 0; compute the rank of the first `size` bits of the bv<0>
     template<int bvnum = 0>
-    auto rank1(size_t size) const -> size_t {
+    auto rank1(uint32_t size) const -> uint32_t {
       static_assert(bvnum == 0);
       assert(size <= size_);
-
-      BENCH_LS( auto start_time = std::chrono::high_resolution_clock::now(); )
       const auto &block = blocks_[size/256];
-      size_t ret = block.rank0_ + block.rank1<bvnum>(size % 256);
-      BENCH_LS(
-        auto end_time = std::chrono::high_resolution_clock::now();
-        rank_time_ += (end_time - start_time).count();
-      )
+      uint32_t ret = block.rank0_ + block.rank1<bvnum>(size % 256);
       return ret;
     }
 
     // `bvnum` must be 1; select the `rank`-th 1 bit from the second bit vector
     // `rank` must not exceed `louds_l1_rank_` as only selects in the first level are supported
     template<int bvnum = 1>
-    auto select1(size_t rank) const -> size_t {
+    auto select1(uint32_t rank) const -> uint32_t {
       static_assert(bvnum == 1);
       assert(rank <= louds_l1_rank_);
 
-      BENCH_LS( auto start_time = std::chrono::high_resolution_clock::now(); )
       uint32_t block_idx;
       uint32_t sample_idx = rank / sample_size_;
       uint32_t pos = sample_[sample_idx];
@@ -448,18 +321,14 @@ class LoudsSparseCC {
         block_idx++;
         block_rank = blocks_[block_idx].rank1<1>();
       }
-      size_t ret = block_idx*256 + blocks_[block_idx].select1<1>(rank - cumulative_rank);
-      BENCH_LS(
-        auto end_time = std::chrono::high_resolution_clock::now();
-        select_time_ += (end_time - start_time).count();
-      )
+      uint32_t ret = block_idx*256 + blocks_[block_idx].select1<1>(rank - cumulative_rank);
       return ret;
     }
 
     // return the position of the closest 1 bit before position `pos` (inclusive)
     // if not found, return 0
     template<int bvnum>
-    auto prev1(size_t pos) const -> size_t {
+    auto prev1(uint32_t pos) const -> uint32_t {
       static_assert(bvnum == 0 || bvnum == 1);
 
       if (pos >= size_) {
@@ -502,7 +371,7 @@ class LoudsSparseCC {
     // return the position of the closest 1 bit after position `pos` (inclusive)
     // if not found, return `size_`
     template<int bvnum>
-    auto next1(size_t pos) const -> size_t {
+    auto next1(uint32_t pos) const -> uint32_t {
       static_assert(bvnum == 0 || bvnum == 1);
 
       if (pos >= size_) {
@@ -545,19 +414,13 @@ class LoudsSparseCC {
 
     // bvnum must be 1; returns bv<1>.select1(bv<0>.rank1(pos + 1) + offset_ + 1); used for child navigation
     template<int bvnum = 1>
-    auto rs(size_t pos) const -> size_t {
+    auto rs(uint32_t pos) const -> uint32_t {
       static_assert(bvnum == 1);
       assert(pos < size_);
 
-      BENCH_LS( auto start_time = std::chrono::high_resolution_clock::now(); )
       Block &block = blocks_[(pos+1)/256];
       uint32_t rank = block.rank0_ + block.rank1<0>((pos + 1) % 256);
-      BENCH_LS(
-        auto end_time = std::chrono::high_resolution_clock::now();
-        rank_time_ += (end_time - start_time).count();
-      )
 
-      BENCH_LS( start_time = std::chrono::high_resolution_clock::now(); )
       uint32_t target = block.select1_;
       uint32_t block_idx = target / 256;
       // offset to start of block
@@ -570,14 +433,151 @@ class LoudsSparseCC {
         block_idx++;
         block_rank = blocks_[block_idx].rank1<1>();
       }
-      size_t ret = block_idx*256 + blocks_[block_idx].select1(rank - cumulative_rank);
-      BENCH_LS(
-        end_time = std::chrono::high_resolution_clock::now();
-        select_time_ += (end_time - start_time).count();
-      )
+      uint32_t ret = block_idx*256 + blocks_[block_idx].select1(rank - cumulative_rank);
       return ret;
     }
   };
-};
+  using bitvec = BitVector;
+ public:
+  using key_type = Key;
+  using label_vec = StaticVector<uint8_t>;
 
-#undef BENCH_LS
+  static constexpr uint8_t terminator_ = 0;
+  static constexpr int cutoff_ = cutoff;
+  static constexpr uint32_t invalid_offset_ = std::numeric_limits<uint32_t>::max();
+
+  LoudsSparseCC() = default;
+
+  void build(FstBuilder &builder) {
+    clear();
+
+    depth_ = builder.s_labels_.size();
+    if (depth_ == 0) {
+      clear();
+      return;
+    }
+
+    uint32_t size = 0;
+    for (const auto &labels : builder.s_labels_) {
+      size += labels.size();
+    }
+
+    labels_.reserve(size);
+    bv_.reserve(size);
+
+    for (const auto &labels : builder.s_labels_) {
+      for (auto label : labels) {
+        labels_.emplace_back(label);
+      }
+    }
+
+    for (int i = 0; i < builder.s_has_child_.size(); i++) {
+      bv_.load_bits(builder.s_has_child_[i].bits(), builder.s_louds_[i].bits(), 0, builder.s_has_child_[i].size());
+    }
+    bv_.build(256, builder.rank_first_ls_level());
+  }
+
+  void clear() {
+    depth_ = offset_ = 0;
+    labels_.clear();
+    bv_.clear();
+  }
+
+  // check if `key[beg:]` can reach leaf `leaf_id`
+  // return the number of matched labels on success and 0 otherwise
+  std::enable_if_t<cutoff_ == 0>
+  auto match(const key_type &key, uint32_t beg, uint32_t leaf_id) const -> uint32_t {
+    assert(offset_ == 0);
+    assert(depth_ > 0);
+
+    uint16_t len = key.size() - beg, matched_len = 0;
+    uint32_t pos = 0;
+
+    while (matched_len < len) {
+      if (labels_.at(pos) == terminator_ && value_pos(pos) == leaf_id) {
+        return matched_len;
+      }
+      uint32_t end = node_end(pos);
+      pos = labels_.find(key[beg + matched_len], pos, end);
+      if (pos == end) {
+        return 0;
+      }
+      assert(labels_.at(pos) == key[matched_len]);
+      if (!bv_.get<0>(pos)) {
+        return leaf_id == value_pos(pos) ? matched_len + 1 : 0;
+      }
+      pos = child_pos(pos);
+      matched_len++;
+    }
+    return labels_.at(pos) == terminator_ && value_pos(pos) == leaf_id ? matched_len : 0;
+  }
+
+  auto get(const key_type &key, uint32_t start_node_num) const -> uint32_t {
+    if (depth_ == 0) {
+      return invalid_offset_;
+    }
+
+    uint16_t len = key.size(), matched_len = cutoff_;
+    uint32_t pos;
+    if constexpr (cutoff_ > 0) {
+      pos = bv_.select1(start_node_num + 1);
+    } else {
+      pos = 0;
+    }
+
+    while (matched_len < len) {
+      // locate the end of current node
+      uint32_t end = node_end(pos);
+      // search for label
+      pos = labels_.find(key[matched_len], pos, end);
+      if (pos == end) {  // mismatch
+        return invalid_offset_;
+      }
+      assert(labels_.at(pos) == key[matched_len]);
+
+      if (!bv_.get<0>(pos)) {  // branch terminates
+        return value_pos(pos);
+      }
+
+      // trace down child pointer
+      pos = child_pos(pos);
+      matched_len++;
+    }
+
+    if (labels_.at(pos) == terminator_) {  // matched as a prefix key
+      return value_pos(pos);
+    }
+    return invalid_offset_;
+  }
+
+ private:
+  auto node_start(uint32_t pos) const -> uint32_t {
+    return bv_.prev1<1>(pos);
+  }
+
+  auto node_end(uint32_t pos) const -> uint32_t {
+    return bv_.next1<1>(pos + 1);
+  }
+
+  auto value_pos(uint32_t pos) const -> uint32_t {
+    return pos - bv_.rank1<0>(pos);
+  }
+
+  auto child_pos(uint32_t pos) const -> uint32_t {
+    return bv_.rs<1>(pos);
+  }
+
+  // 8 bits per label; indicates valid branches at each node, in level order
+  // labels belonging to the same node are sorted in ascending order
+  label_vec labels_;
+
+  // 2 bits per label; packed has-child and louds
+  bitvec bv_;
+
+  // since LOUDS-Sparse may not start from the first level, we need to add an offset of `# missing children - # missing nodes`
+  uint32_t offset_;
+
+  uint16_t depth_;
+
+  friend class FstCC;
+};

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "utils.hpp"
-#include "fst_cc_builder.hpp"
+#include "fst_builder.hpp"
 #include "static_vector.hpp"
 
 #include <limits>
@@ -18,7 +18,7 @@ class LS4CoCo {
  public:
   using key_type = Key;
   using label_vec = StaticVector<uint8_t>;
-  using builder_type = FstCCBuilder<key_type>;
+  using builder_type = FstBuilder<key_type>;
 
   static constexpr uint8_t terminator_ = 0;
 
@@ -160,7 +160,7 @@ class LS4CoCo {
       }
     }
 
-    void load_bits(const uint64_t *bits0, const uint64_t *bits1, size_t start, size_t size) {
+    void load_bits(const uint64_t *bits0, const uint64_t *bits1, size_t start, uint32_t size) {
       if (size_ + size > capacity_) {
         capacity_ = std::max<uint32_t>(((size_ + size) * 2 + 255) / 256 * 256, 256 * 8);
         blocks_ = reinterpret_cast<Block *>(realloc(blocks_, sizeof(Block) * (capacity_ / 256 + 1)));
@@ -473,7 +473,7 @@ class LS4CoCo {
 
     // is the key legitimately terminated?
     auto valid() const -> bool {
-      return !trie_->bv_.get<0>(pos_);  // has_child.get(pos_)
+      return !trie_->has_child(pos_);
     }
 
     // is the current key a prefix key?
@@ -511,7 +511,7 @@ class LS4CoCo {
 
     // does NOT regress if current level is already greater than `max_level`
     void get_min_key(uint32_t max_level = std::numeric_limits<uint32_t>::max()) {
-      while (level_ < max_level && trie_->bv_.get<0>(pos_)) {  // has_child.get(pos_)
+      while (level_ < max_level && trie_->has_child(pos_)) {
         pos_ = trie_->child_pos(pos_);  // keep taking the leftmost branch
         uint8_t label = trie_->get_label(pos_);
         if (label != terminator_) {
@@ -523,7 +523,7 @@ class LS4CoCo {
 
     // does NOT regress if current level is already greater than `max_level`
     void get_max_key(uint32_t max_level = std::numeric_limits<uint32_t>::max()) {
-      while (level_ < max_level && trie_->bv_.get<0>(pos_)) {  // has_child.get(pos_)
+      while (level_ < max_level && trie_->has_child(pos_)) {
         pos_ = trie_->child_pos(pos_);
         pos_ = trie_->node_end(pos_) - 1;  // keep taking the rightmost branch
         uint8_t label = trie_->get_label(pos_);
@@ -543,7 +543,7 @@ class LS4CoCo {
           key_.push_back(trie_->get_label(pos_));
           get_min_key(max_level);
           return true;
-        } else if (pos_ + 1 < trie_->bv_.size() && !trie_->bv_.get<1>(pos_ + 1)) {  // !louds.get(pos_): not the last label in node
+        } else if (pos_ + 1 < trie_->bv_.size() && !trie_->louds(pos_ + 1)) {  // not the last label in node
           pos_++;
           key_.back() = trie_->get_label(pos_);
           get_min_key(max_level);
@@ -565,7 +565,7 @@ class LS4CoCo {
 
       get_min_key(next_level);
       while (level_ < next_level) {
-        assert(!trie_->bv_.get<0>(pos_));  // !has_child.get(pos_): key terminates before `next_level`
+        assert(!trie_->has_child(pos_));  // key terminates before `next_level`
         while (true) {
           if (trie_->get_label(pos_) != terminator_) {
             key_.pop_back();
@@ -597,13 +597,13 @@ class LS4CoCo {
 
       get_max_key(next_level);
       while (level_ < next_level) {
-        assert(!trie_->bv_.get<0>(pos_));  // !has_child.get(pos_): key terminates before `next_level`
+        assert(!trie_->has_child(pos_));  // key terminates before `next_level`
         while (true) {
           if (trie_->get_label(pos_) != terminator_) {
             key_.pop_back();
           }
           uint32_t start = trie_->node_start(pos_);
-          uint32_t prev = trie_->bv_.prev1<0>(pos_ - 1);  // has_child.next1(pos_)
+          uint32_t prev = trie_->bv_.prev1<0>(pos_ - 1);  // has_child.prev1(pos_)
           if (prev >= start) {  // trace previous branch
             pos_ = prev;
             key_.push_back(trie_->get_label(pos_));
@@ -624,6 +624,7 @@ class LS4CoCo {
  public:
   LS4CoCo() = default;
 
+  // keys must be sorted and unique
   template<typename Iterator>
   void build(Iterator begin, Iterator end) {
     builder_type builder;
@@ -684,13 +685,17 @@ class LS4CoCo {
     return bv_.next1<1>(pos + 1);
   }
 
+  auto node_degree(uint32_t pos) const -> uint32_t {
+    return node_end(pos) - node_start(pos);
+  }
+
   auto node_id(uint32_t pos) const -> uint32_t {
-    assert(bv_.get<1>(pos));  // louds.get(pos)
+    assert(louds(pos));
     return bv_.rank1<1>(pos);
   }
 
   auto value_pos(uint32_t pos) const -> uint32_t {
-    assert(!bv_.get<0>);  // !has_child.get(pos)
+    assert(!has_child(pos));
     return pos - bv_.rank1<0>(pos);
   }
 
@@ -700,6 +705,14 @@ class LS4CoCo {
 
   auto parent_pos(uint32_t pos) const -> uint32_t {
     return bv_.rs<0>(pos);
+  }
+
+  auto has_child(uint32_t pos) const -> bool {
+    return bv_.get<0>(pos);
+  }
+
+  auto louds(uint32_t pos) const -> bool {
+    return bv_.get<1>(pos);
   }
 
   auto get_label(uint32_t pos) const -> uint8_t {
@@ -749,4 +762,5 @@ class LS4CoCo {
   friend class walker;
   template<typename K> friend class CoCoOptimizer;
   template<typename K> friend class CoCoCC;
+  template<typename K> friend class CoCoRecursive;
 };

@@ -55,7 +55,7 @@ class StaticBitVector {
     // read `size` bits starting from the `start`-th bit of `bits` into this block
     // returns the rank of the bits read
     // does NOT set `rank1_` - it is the caller's responsibility
-    auto init(const uint64_t *bits, size_t start, size_t size) -> int {
+    auto init(const uint64_t *bits, size_t start, uint32_t size) -> int {
       assert(size <= 256);
 
       int elt_idx = start / 64, num_elts = (size + 63) / 64;
@@ -88,11 +88,11 @@ class StaticBitVector {
         }
 
         if (shift_amt + size % 64 < 64) {
-          size_t remainder_bits = (shift_amt + size) % 64;
+          uint32_t remainder_bits = (shift_amt + size) % 64;
           uint64_t last_elt = bits[elt_idx+num_elts-1] & MASK(remainder_bits);
           bits_[num_elts-1] = last_elt >> shift_amt;
         } else {
-          size_t remainder_bits = (shift_amt + size) % 64;
+          uint32_t remainder_bits = (shift_amt + size) % 64;
           uint64_t last_elt = bits[elt_idx+num_elts] & MASK(remainder_bits);
           bits_[num_elts-1] = (bits[elt_idx+num_elts-1] >> shift_amt) | (last_elt << (64-shift_amt));
         }
@@ -114,8 +114,8 @@ class StaticBitVector {
       return rank;
     }
 
-    void serialize(uint64_t *dst, size_t start) const {
-      size_t shift_amt = start % 64;
+    void serialize(uint64_t *dst, uint32_t start) const {
+      uint32_t shift_amt = start % 64;
       if (shift_amt == 0) {
         dst[start/64 + 0] = bits_[0];
         dst[start/64 + 1] = bits_[1];
@@ -153,7 +153,7 @@ class StaticBitVector {
 
   StaticBitVector() = default;
 
-  StaticBitVector(const uint64_t *bits, size_t start, size_t size, uint32_t sample_rate = 0) {
+  StaticBitVector(const uint64_t *bits, uint32_t start, uint32_t size, uint32_t sample_rate = 0) {
     init(bits, start, size, sample_rate);
   }
 
@@ -162,11 +162,11 @@ class StaticBitVector {
     free(sample_);
   }
 
-  auto size() const -> size_t {
+  auto size() const -> uint32_t {
     return size_;
   }
 
-  auto rank1() const -> size_t {
+  auto rank1() const -> uint32_t {
     return rank_;
   }
 
@@ -174,14 +174,14 @@ class StaticBitVector {
     return size_ == 0;
   }
 
-  void reserve(size_t size) {
+  void reserve(uint32_t size) {
     if (size > capacity_) {
       capacity_ = (size + 255) / 256 * 256;
       blocks_ = reinterpret_cast<Block *>(realloc(blocks_, sizeof(Block) * (capacity_ / 256 + 1)));
     }
   }
 
-  void resize(size_t size) {
+  void resize(uint32_t size) {
     reserve(size);
     size_ = size;
   }
@@ -209,17 +209,17 @@ class StaticBitVector {
     size_++;
   }
 
-  void set1(size_t pos) {
+  void set1(uint32_t pos) {
     assert(pos < size_);
     SET_BIT(blocks_[pos/256].bits_[(pos%256)/64], pos % 64);
   }
 
-  void set0(size_t pos) {
+  void set0(uint32_t pos) {
     assert(pos < size_);
     CLEAR_BIT(blocks_[pos/256].bits_[(pos%256)/64], pos % 64);
   }
 
-  void init(const uint64_t *bits, size_t start, size_t size, uint32_t sample_rate = 0) {
+  void init(const uint64_t *bits, uint32_t start, uint32_t size, uint32_t sample_rate = 0) {
     int num_blocks = (size + 255) / 256;
 
     size_ = size;
@@ -228,19 +228,19 @@ class StaticBitVector {
     clear();
     blocks_ = reinterpret_cast<Block *>(malloc(sizeof(Block) * (num_blocks + 1)));  // the last elt acts as a sentinel
 
-    size_t total_rank = 0;
+    uint32_t total_rank = 0;
     int shift_amt = start % 64;
-    size_t i = 0;
+    uint32_t i = 0;
     auto ptr = bits;
     while (i < size_ / 256) {  // deal with input in batches of 4
-      size_t curr_rank = blocks_[i].init(bits, i*256);
+      uint32_t curr_rank = blocks_[i].init(bits, i*256);
       blocks_[i].rank1_ = total_rank;
       total_rank += curr_rank;
       i++;
     }
 
     if (size_ % 256) {  // deal with remained input, if any
-      size_t curr_rank = blocks_[size_/256].init(bits, size_ - size_%256, size_%256);
+      uint32_t curr_rank = blocks_[size_/256].init(bits, size_ - size_%256, size_%256);
       blocks_[size_/256].rank1_ = total_rank;
       total_rank += curr_rank;
     }
@@ -283,7 +283,7 @@ class StaticBitVector {
     }
   }
 
-  void load_bits(const uint64_t *bits, size_t start, size_t size) {
+  void load_bits(const uint64_t *bits, uint32_t start, uint32_t size) {
     if (size_ + size > capacity_) {
       capacity_ = std::max<uint32_t>(((size_ + size) * 3 / 2 + 255) / 256 * 256, 256 * 8);
       blocks_ = reinterpret_cast<Block *>(realloc(blocks_, sizeof(Block) * (capacity_ / 256 + 1)));
@@ -296,7 +296,7 @@ class StaticBitVector {
       return;
     }
 
-    size_t end = start + size;
+    uint32_t end = start + size;
     copy_bits(blocks_[size_/256].bits_, size_ % 256, bits, start, leftover);
     size_ += leftover;
     start += leftover;
@@ -342,7 +342,7 @@ class StaticBitVector {
   }
 
   // get the `pos`-th bit
-  auto get(size_t pos) const -> bool {
+  auto get(uint32_t pos) const -> bool {
     assert(pos < size_);
 
     BENCHMARK( auto start_time = std::chrono::high_resolution_clock::now(); )
@@ -355,7 +355,7 @@ class StaticBitVector {
   }
 
   // compute the rank of the first `size` bits
-  auto rank1(size_t size) const -> size_t {
+  auto rank1(uint32_t size) const -> uint32_t {
     assert(size <= size_);
 
     BENCHMARK( auto start_time = std::chrono::high_resolution_clock::now(); )
@@ -369,7 +369,7 @@ class StaticBitVector {
   }
 
   // select the `rank`-th 1 bit
-  auto select1(size_t rank) const -> size_t {
+  auto select1(uint32_t rank) const -> uint32_t {
     assert(rank <= rank_);
 
     BENCHMARK( auto start_time = std::chrono::high_resolution_clock::now(); )
@@ -401,8 +401,8 @@ class StaticBitVector {
     assert((rank == 0 || blocks_[block_idx].rank1_ < rank) && blocks_[block_idx+1].rank1_ >= rank);
 
     auto &block = blocks_[block_idx];
-    size_t remainder = rank - block.rank1_;
-    size_t ret = block_idx*256 + block.select1(remainder);
+    uint32_t remainder = rank - block.rank1_;
+    uint32_t ret = block_idx*256 + block.select1(remainder);
 
     BENCHMARK(
       auto end_time = std::chrono::high_resolution_clock::now();
@@ -413,7 +413,7 @@ class StaticBitVector {
 
   // return the position of the first 1 bit starting from position `pos` (inclusive)
   // if not found, return `size_`
-  auto next1(size_t pos) const -> size_t {
+  auto next1(uint32_t pos) const -> uint32_t {
     if (pos >= size_) {
       return size_;
     }
@@ -436,7 +436,7 @@ class StaticBitVector {
     return size_;
   }
 
-  void serialize(uint64_t *dst, size_t start) {
+  void serialize(uint64_t *dst, uint32_t start) {
     int num_blocks = (size_ + 255) / 256;
     for (int i = 0; i < num_blocks; i++) {
       blocks_[i].serialize(dst, start);
@@ -444,23 +444,20 @@ class StaticBitVector {
     }
   }
 
-#ifdef __TRACK_MEMORY__
-  void print_memory_usage() const {
-    printf("[STATIC BITVECTOR MEMORY USAGE]\n");
-    size_t actual = size();
-    size_t total = sizeof(Block) * (size_ + 255) / 256 + sizeof(StaticBitVector);
-    if (sample_ != nullptr) {
-      total += sizeof(uint32_t) * (rank_ + sample_rate_ - 1) / sample_rate_;
-    }
-    total *= 8;
-    printf("bits stored: %lu, total bits used: %lu, usage: %lf\n", actual, total, (double)actual/total);
+  auto size_in_bytes() const -> size_t {
+    uint32_t num_blocks = capacity_ / 256;
+    uint32_t num_samples = (rank1() + sample_rate_ - 1) / sample_rate_ + 1;
+    return num_blocks * sizeof(Block) + num_samples * sizeof(uint32_t) + sizeof(StaticBitVector);
   }
-#endif
+
+  auto size_in_bits() const -> size_t {
+    return size_in_bytes() * 8;
+  }
 
 #ifdef __DEBUG__
   __NOINLINE void print() const {
     printf("size: %u, rank: %u\nbits: ", size_, rank_);
-    for (size_t i = 0; i < (size_ + 255) / 256; i++) {
+    for (uint32_t i = 0; i < (size_ + 255) / 256; i++) {
       printf("%016lx,%016lx,%016lx,%016lx,", blocks_[i].bits_[0], blocks_[i].bits_[1],
                                              blocks_[i].bits_[2], blocks_[i].bits_[3]);
     }
@@ -493,9 +490,9 @@ class StaticBitVector {
   uint32_t sample_rate_{0};
 
 #ifdef __MICROBENCHMARK__
-  static size_t get_time_;
-  static size_t rank_time_;
-  static size_t select_time_;
+  static uint32_t get_time_;
+  static uint32_t rank_time_;
+  static uint32_t select_time_;
 #endif
 
 #ifdef __DEBUG__
@@ -504,9 +501,9 @@ class StaticBitVector {
 };
 
 #ifdef __MICROBENCHMARK__
-size_t StaticBitVector::get_time_ = 0;
-size_t StaticBitVector::rank_time_ = 0;
-size_t StaticBitVector::select_time_ = 0;
+uint32_t StaticBitVector::get_time_ = 0;
+uint32_t StaticBitVector::rank_time_ = 0;
+uint32_t StaticBitVector::select_time_ = 0;
 #endif
 
 #undef BENCHMARK

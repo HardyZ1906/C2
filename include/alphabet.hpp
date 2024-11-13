@@ -21,6 +21,15 @@ struct Alphabet {
     return *this;
   }
 
+  auto operator+=(const Alphabet &other) -> Alphabet & {
+    bits_[0] |= other.bits_[0];
+    bits_[1] |= other.bits_[1];
+    bits_[2] |= other.bits_[2];
+    bits_[3] |= other.bits_[3];
+    build_index();
+    return *this;
+  }
+
   void clear() {
     std::memset(this, 0, sizeof(Alphabet));
   }

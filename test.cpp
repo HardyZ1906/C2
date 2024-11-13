@@ -19,22 +19,25 @@ int main(int argc, char *argv[]) {
   std::ifstream file(filename);
   std::vector<std::string> keys;
   std::string key;
-  while (file >> key) {
+  while (std::getline(file, key)) {
     keys.emplace_back(key);
   }
   std::sort(keys.begin(), keys.end());
   auto new_end = std::unique(keys.begin(), keys.end());
   keys.erase(new_end, keys.end());
 
+  auto start = std::chrono::high_resolution_clock::now();
   LS4CoCo<std::string> trie;
   trie.build(keys.begin(), keys.end());
 
-  auto start = std::chrono::high_resolution_clock::now();
   CoCoOptimizer<std::string> optimizer(&trie);
   optimizer.optimize(space_relaxation);
 #ifdef __DEBUG_OPTIMIZER__
   optimizer.print_optimal();
 #endif
+  // fflush(stdout);
+  // exit(0);
+
   CoCoCC<std::string> coco(optimizer);
   auto end = std::chrono::high_resolution_clock::now();
   auto duration = (end - start).count();
@@ -42,9 +45,16 @@ int main(int argc, char *argv[]) {
 
   constexpr int mb_bits = 1024*1024*8;
   auto [enc_cost, total_cost] = optimizer.get_final_cost();
+  auto [expected_macros, expected_leaves] = optimizer.get_num_nodes();
+  auto [actual_macros, actual_leaves] = coco.get_num_nodes();
   printf("expected encoding cost: %lf MB, expected total cost: %lf MB\n", (double)enc_cost/mb_bits, (double)total_cost/mb_bits);
+  printf("expected #macros: %d, expected #leaves: %d\n", expected_macros, expected_leaves);
   printf("actual encoding cost: %lf MB, actual total cost: %lf MB\n", (double)coco.encoding_size()/mb_bits,
          (double)coco.size_in_bits()/mb_bits);
+  printf("actual #macros: %d, actual #leaves: %d\n", actual_macros, actual_leaves);
+
+  // fflush(stdout);
+  // exit(0);
 
   std::shuffle(keys.begin(), keys.end(), std::mt19937{2});
   std::set<uint32_t> key_ids;
@@ -52,7 +62,7 @@ int main(int argc, char *argv[]) {
   for (size_t i = 0; i < keys.size(); i += 1000) {
     for (size_t j = i; j < keys.size() && j < i + 1000; j++) {
       // printf("%ld: get %s", j, keys[j].c_str());
-      auto key_id = coco.lookup(keys[j]);
+      volatile auto key_id = coco.lookup(keys[j]);
       // printf(", id = %d\n", key_id);
       // assert(key_id != -1);
       // assert(key_id < keys.size());

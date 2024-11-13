@@ -1,7 +1,7 @@
 #pragma once
 
 #include "utils.hpp"
-#include "fst_cc_builder.hpp"
+#include "fst_builder.hpp"
 
 #include <vector>
 #include <limits>

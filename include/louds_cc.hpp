@@ -2,21 +2,6 @@
 
 #include "utils.hpp"
 
-// #define __BENCH_BV__
-#ifdef __BENCH_BV__
-# define BENCH_BV(foo) foo
-# include <chrono>
-#else
-# define BENCH_BV(foo)
-#endif
-
-// #define __BENCH_LOUDS__
-#ifdef __BENCH_LOUDS__
-# define BENCH_LOUDS(foo) foo
-#else
-# define BENCH_LOUDS(foo)
-#endif
-
 
 template<int spill_threshold = 128>
 struct LoudsCC {
@@ -79,28 +64,6 @@ struct LoudsCC {
         }
       }
     };  // 48 bytes
-
-  #ifdef __BENCH_BV__
-    static size_t get_time_;
-    static size_t rank_time_;
-    static size_t select_time_;
-    static size_t num_selects_;
-    static size_t probed_blocks_;
-    static size_t max_probe_dist_;
-
-    static void print_microbenchmark() {
-      printf("get time: %lf ms; rank time: %lf ms; select time: %lf ms\n", (double)get_time_/1000000,
-             (double)rank_time_/1000000, (double)select_time_/1000000);
-      printf("%ld select probed %ld blocks, avg probe dist = %lf, max probe dist = %ld\n", num_selects_, probed_blocks_, (double)probed_blocks_/num_selects_, max_probe_dist_);
-    }
-
-    static void clear_microbenchmark() {
-      max_probe_dist_ = probed_blocks_ = num_selects_ = get_time_ = rank_time_ = select_time_ = 0;
-    }
-  #else
-    static void print_microbenchmark() {}
-    static void clear_microbenchmark() {}
-  #endif
 
     Block *blocks_{nullptr};
 
@@ -292,27 +255,15 @@ struct LoudsCC {
     // get the `pos`-th bit
     auto get(uint32_t pos) const -> bool {
       assert(pos < size_);
-
-      BENCH_BV( auto start_time = std::chrono::high_resolution_clock::now(); )
       bool ret = GET_BIT(blocks_[pos/256].bits_[(pos%256)/64], pos%64);
-      BENCH_BV(
-        auto end_time = std::chrono::high_resolution_clock::now();
-        get_time_ += (end_time - start_time).count();
-      )
       return ret;
     }
 
     // return the number of 1 bits in the first `size` bits
     auto rank1(uint32_t size) const -> uint32_t {
       assert(size <= size_);
-
-      BENCH_BV( auto start_time = std::chrono::high_resolution_clock::now(); )
       const auto &block = blocks_[size / 256];
       uint32_t ret = block.rank1_ + block.rank1(size % 256);
-      BENCH_BV(
-        auto end_time = std::chrono::high_resolution_clock::now();
-        rank_time_ += (end_time - start_time).count();
-      )
       return ret;
     }
 
@@ -324,23 +275,16 @@ struct LoudsCC {
     // return the number of 00 patterns in the first `size` bits
     auto rank00(uint32_t size) const -> uint32_t {
       assert(size <= size_);
-
-      BENCH_BV( auto start_time = std::chrono::high_resolution_clock::now(); )
       const auto &block = blocks_[size / 256];
       bool prev = (size >= 256 && (blocks_[size/256 - 1].bits_[3] >> 63));
       uint32_t ret = block.rank00_ + block.rank00(size % 256, prev);
-      BENCH_BV(
-        auto end_time = std::chrono::high_resolution_clock::now();
-        rank_time_ += (end_time - start_time).count();
-      )
       return ret;
     }
 
     // return the position of the closest 0 bit after position `pos` (inclusive)
     // if not found, return `size_`
     auto next0(uint32_t pos) const -> uint32_t {
-      BENCH_BV( auto start = std::chrono::high_resolution_clock::now(); )
-      // TODO: maybe search by block, then by word?
+      // TODO: maybe search by block using rank, then by word?
       uint32_t idx = pos / 64;
       uint64_t elt = ~blocks_[idx/4].bits_[idx%4] & ~MASK(pos%64);
       while (elt == 0) {
@@ -348,39 +292,18 @@ struct LoudsCC {
         elt = ~blocks_[idx/4].bits_[idx%4];
       }
       uint32_t ret = idx*64 + __builtin_ctzll(elt);
-      BENCH_BV(
-        auto end = std::chrono::high_resolution_clock::now();
-        get_time_ += (end - start).count();
-      )
       return ret;
     }
 
     // return select0(rank1(pos+1))
     auto r1s0(uint32_t pos) const -> uint32_t {
       assert(pos < size_);
-
-      BENCH_BV( auto start_time = std::chrono::high_resolution_clock::now(); )
       Block &block = blocks_[(pos+1)/256];
       uint32_t rank = block.rank1_ + block.rank1((pos + 1) % 256);
-      BENCH_BV(
-        auto end_time = std::chrono::high_resolution_clock::now();
-        rank_time_ += (end_time - start_time).count();
-      )
-
-      BENCH_BV( num_selects_++; )
-
-      BENCH_BV( start_time = std::chrono::high_resolution_clock::now(); )
       if (GET_BIT(block.select0_, 31)) {
         uint32_t spill_idx = block.select0_ & MASK(31);
-        BENCH_BV(
-          end_time = std::chrono::high_resolution_clock::now();
-          select_time_ += (start_time - end_time).count();
-          probed_blocks_++;
-        )
         return spills_[spill_idx + (rank - block.rank1_)];
       }
-
-      BENCH_BV( size_t probe_dist = 1; )
       int left = block.select0_ & MASK(24), right = left + (block.select0_ >> 24) + 1;
       assert(left*256 - blocks_[left].rank1_ < rank);
       assert(right*256 - blocks_[right].rank1_ >= rank);
@@ -391,24 +314,12 @@ struct LoudsCC {
         } else {
           right = mid - 1;
         }
-        BENCH_BV( probe_dist++; )
       }
       while ((left+1)*256 - blocks_[left+1].rank1_ < rank) {
         left++;
-        BENCH_BV( probe_dist++; )
       }
-
       uint32_t remainder = rank - (left*256 - blocks_[left].rank1_);
       uint32_t ret = left*256 + blocks_[left].select0(remainder);
-      BENCH_BV(
-        end_time = std::chrono::high_resolution_clock::now();
-        select_time_ += (end_time - start_time).count();
-        probed_blocks_ += probe_dist;
-        if (max_probe_dist_ < probe_dist) {
-          // printf("pos %ld: probe dist %d\n", pos, probe_dist);
-          max_probe_dist_ = probe_dist;
-        }
-      )
       return ret;
     }
 
@@ -440,10 +351,6 @@ struct LoudsCC {
       return block_idx*256 + block.select0(remainder);
     }
   };
-
-#ifdef __BENCH_LOUDS__
-  static size_t select_time_;
-#endif
 
   BitVector bv_;
 
@@ -511,12 +418,7 @@ struct LoudsCC {
 
   auto child_pos(uint32_t pos) const -> uint32_t {
     assert(bv_.get(pos));
-    BENCH_LOUDS( auto start = std::chrono::high_resolution_clock::now(); )
     auto ret = bv_.r1s0(pos) + 1;
-    BENCH_LOUDS(
-      auto end = std::chrono::high_resolution_clock::now();
-      select_time_ += (end - start).count();
-    )
     return ret;
   }
 
@@ -535,42 +437,4 @@ struct LoudsCC {
   auto size_in_bits() const -> uint32_t {
     return size_in_bytes() * 8;
   }
-
-#ifdef __BENCH_LOUDS__
-  static void print_microbenchmark() {
-    printf("select time: %lf ms\n", (double)select_time_/1000000);
-    BitVector::print_microbenchmark();
-  }
-
-  static void clear_microbenchmark() {
-    select_time_ = 0;
-    BitVector::clear_microbenchmark();
-  }
-#else
-  static void print_microbenchmark() {
-    BitVector::print_microbenchmark();
-  }
-
-  static void clear_microbenchmark() {
-    BitVector::clear_microbenchmark();
-  }
-#endif
 };
-
-#ifdef __BENCH_BV__
-template<int spill_threshold> size_t LoudsCC<spill_threshold>::BitVector::get_time_ = 0;
-template<int spill_threshold> size_t LoudsCC<spill_threshold>::BitVector::rank_time_ = 0;
-template<int spill_threshold> size_t LoudsCC<spill_threshold>::BitVector::select_time_ = 0;
-template<int spill_threshold> size_t LoudsCC<spill_threshold>::BitVector::num_selects_ = 0;
-template<int spill_threshold> size_t LoudsCC<spill_threshold>::BitVector::probed_blocks_ = 0;
-template<int spill_threshold> size_t LoudsCC<spill_threshold>::BitVector::max_probe_dist_ = 0;
-#endif
-
-#ifdef __BENCH_LOUDS__
-template<int spill_threshold> size_t LoudsCC<spill_threshold>::select_time_ = 0;
-#endif
-
-#undef __BENCH_LOUDS__
-#undef __BENCH_BV__
-#undef BENCH_BV
-#undef BENCH_LOUDS
