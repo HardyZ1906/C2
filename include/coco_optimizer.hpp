@@ -7,8 +7,9 @@
 #include "../lib/ds2i/compact_elias_fano.hpp"
 #include "../lib/ds2i/integer_codes.hpp"
 
-#include <vector>
 #include <queue>
+#include <unordered_set>
+#include <vector>
 
 // #define __DEBUG_OPTIMIZER__
 #ifdef __DEBUG_OPTIMIZER__
@@ -44,16 +45,20 @@ class CoCoOptimizer {
   using key_type = Key;
   using alphabet_t = Alphabet;
   using trie_t = LS4CoCo<key_type>;
+  using counter_type = CountingBloomFilter<>;
 
-  struct state_s {
+  struct state_t {
     alphabet_t remap_{};  // local alphabet of optimal macro node
     size_t enc_cost_{0};  // optimal space cost of encoding
     size_t self_enc_cost_{0};  // space cost of this node's encoding
     uint32_t depth_{0};   // depth of optimal macro node
     uint32_t num_macros_{0};  // # of macro nodes in optimal subtrie
     uint32_t num_leaves_{0};  // # of leaf nodes in optimal subtrie
-    uint32_t path_len_{0};    // length of the longest unary path starting from this node
-    bool suffix_path_{false};
+
+    uint32_t path_len_{0};       // length of the longest unary path starting from this node
+    uint32_t pattern_len_{0};    // length of pattern starting from this node for double trie compression
+    bool suffix_path_{false};    // whether node belongs to a suffix path or not
+
     encoding_t encoding_{encoding_t::COUNT};
   };
 
@@ -64,23 +69,30 @@ class CoCoOptimizer {
   void init() {
     assert(trie_ != nullptr);
     states_.resize(trie_->num_nodes());
+    counter_.resize(trie_->labels_.size());
     get_global_alphabet();
   }
 
-  void optimize(uint32_t space_relaxation = 0, uint32_t pattern_len = 8) {
+  void optimize(uint32_t space_relaxation = 0, uint32_t pattern_len = 20, uint32_t min_occur = 10) {
     assert(trie_ != nullptr);
+    assert(pattern_len == 0 || min_occur >= 1);
 
-    traverse_unary_paths(pattern_len);
+    space_relaxation_ = space_relaxation;
+    pattern_len_ = pattern_len;
+    min_occur_ = min_occur;
+    uint32_t num_patterns = traverse_unary_paths();
+    link_bits_ = (num_patterns <= 1 ? 1 : log2_ceil(num_patterns));
 
     std::vector<uint32_t> levels = trie_->get_level_boundaries();
     // bottom-up optimization
     for (size_t i = levels.size() - 1; i > 0; i--) {
       uint32_t pos = levels[i-1];
       DEBUG( printf("optimize level %d(%d:%d)\n", i - 1, levels[i-1], levels[i]); )
+      printf("optimize level %d(%d:%d)\n", i - 1, levels[i-1], levels[i]);
       uint32_t count = 0;
       while (pos < levels[i]) {  // optimize level
         // DEBUG( printf("optimize node %d\n", pos); )
-        optimize_node(pos, space_relaxation, pattern_len);
+        optimize_node(pos);
         pos = trie_->node_end(pos);
         count++;
       }
@@ -104,7 +116,7 @@ class CoCoOptimizer {
       uint32_t pos = queue.front();
       queue.pop();
       uint32_t node_id = trie_->node_id(pos);
-      state_s &state = states_[node_id];
+      state_t &state = states_[node_id];
       printf("macro node %d: encoding = %d, depth = %d, cost = %ld\n", macro_node_id, state.encoding_,
              state.depth_, space_cost_total(state));
       macro_node_id++;
@@ -130,19 +142,18 @@ class CoCoOptimizer {
 
  private:
   // optimize node at position pos
-  // `pattern_len`: unary paths of length at least this value will be considered for recursive compression
   // @require: all descendents must have been optimized
-  void optimize_node(uint32_t pos, uint32_t space_relaxation, uint32_t pattern_len) {
-    assert(pattern_len > 1);
-
+  void optimize_node(uint32_t pos) {
     uint32_t left = trie_->node_start(pos), right = trie_->node_end(pos) - 1;  // level boundaries
     uint32_t root_id = trie_->node_id(left);
-    state_s best_state;
-    state_s &state = states_[root_id];
+    state_t best_state;
+    state_t &state = states_[root_id];
     // DEBUG( printf("optimize node %d:%d, %d\n", left, right, root_id); )
 
-    // UNARY_PATH or UP_REMAP encode
-    if (try_extend_unary_path(pos, pattern_len)) {
+    if (state.suffix_path_ && state.path_len_ == 1) {
+      optimize_suffix_path(pos);
+      return;
+    } else if (state.encoding_ == encoding_t::UNARY_PATH || state.encoding_ == encoding_t::UP_REMAP) {
       return;
     }
 
@@ -150,7 +161,7 @@ class CoCoOptimizer {
     bool min_key_found = false, max_key_found = false;
     uint32_t num_full_keys = 0;
     alphabet_t remap;  // local alphabet
-    remap.set1(0);  // 0 is reserved for terminator
+    remap.set1(terminator_);  // 0 is reserved for terminator
     size_t best_cost = std::numeric_limits<size_t>::max();
     uint32_t depth = 1;
     uint32_t max_depth_no_remap = max_key_len(alphabet_);
@@ -190,7 +201,7 @@ class CoCoOptimizer {
 
           uint32_t desc_pos = trie_->child_pos(i);
           uint32_t desc_id = trie_->node_id(desc_pos);
-          state_s &desc_state = states_[desc_id];
+          state_t &desc_state = states_[desc_id];
           assert(desc_state.encoding_ != encoding_t::COUNT);
           desc_enc_cost += desc_state.enc_cost_;
           desc_num_macros += desc_state.num_macros_;
@@ -293,7 +304,7 @@ class CoCoOptimizer {
         best_state.remap_ = remap;
         // DEBUG( printf("update best state\n"); )
       }
-      if (100*total_cost <= (100 + space_relaxation)*best_cost) {
+      if (100*total_cost <= (100 + space_relaxation_)*best_cost) {
         state.encoding_ = best_encoding;
         state.depth_ = depth;
         state.enc_cost_ = enc_cost;
@@ -313,15 +324,17 @@ class CoCoOptimizer {
       depth++;
     }
     if (depth <= state.path_len_) {
-      optimize_unary_path(pos, pattern_len);
+      optimize_internal_path(pos);
     }
     assert(states_[root_id].encoding_ != encoding_t::COUNT);
   }
 
   // compute `path_len_` and `suffix_path_` for each node and count patterns
-  void traverse_unary_paths(uint32_t pattern_len = 8) {
+  // returns an (upper bounding) estimate of the number of unique patterns
+  auto traverse_unary_paths() -> uint32_t {
     std::queue<uint32_t> queue;
     std::vector<uint32_t> path;
+    uint32_t ret = 0;
 
     queue.push(0);
     while (!queue.empty()) {
@@ -352,8 +365,11 @@ class CoCoOptimizer {
       }
       bool suffix_path = trie_->node_degree(pos) == 1;
       uint32_t path_len = path.size();
-      if (path_len >= pattern_len) {
-        // TODO: count patterns
+      if (pattern_len_ != 0 && path_len >= pattern_len_) {
+        for (uint32_t i = 0; i <= key.size() - pattern_len_; i++) {
+          uint32_t occ = insert_pattern(key, i);
+          ret += (occ == min_occur_);
+        }
       }
       for (auto node_id : path) {
         states_[node_id].path_len_ = path_len--;
@@ -362,99 +378,200 @@ class CoCoOptimizer {
       path.clear();
       // DEBUG( printf("found unary path: %s %s\n", key.c_str(), suffix_path ? "(suffix)" : "(non-suffix)"); )
     }
+    return ret;
   }
 
-  auto try_extend_unary_path(uint32_t pos, uint32_t pattern_len) -> bool {
-    uint32_t node_id = trie_->node_id(pos);
-    state_s &state = states_[node_id];
-    if (!state.suffix_path_ && state.path_len_ <= 1) {
-      return false;
-    } else if (state.path_len_ == 1) {  // last suffix byte - init suffix path
-      assert(trie_->node_degree(pos) == 1);
-      assert(!trie_->has_child(pos));
-
-      state.remap_.set1(0);
-      state.remap_.set1(alphabet_.encode(trie_->get_label(pos)));
-      state.remap_.build_index();
-      state.depth_ = 1;
-      state.encoding_ = encoding_t::UNARY_PATH;
-      size_t enc_cost = space_cost_unary_path(1, alphabet_.alphabet_size());
-      state.enc_cost_ = state.self_enc_cost_ = enc_cost;
-      state.num_leaves_ = 1;
-      state.num_macros_ = 1;
-      return true;
+  void optimize_suffix_path(uint32_t pos) {
+    std::vector<uint32_t> path;
+    key_type key;
+    while (trie_->node_degree(pos) == 1) {  // move to the upper end of unary path
+      path.emplace_back(pos);
+      key.push_back(trie_->get_label(pos));
+      if (pos == 0) {
+        break;
+      }
+      pos = trie_->parent_pos(pos);
     }
-    assert(trie_->node_degree(pos) == 1 && trie_->has_child(pos));
+    std::reverse(path.begin(), path.end());
+    std::reverse(key.begin(), key.end());
 
-    uint32_t child_id = trie_->node_id(trie_->child_pos(pos));
-    state_s &child_state = states_[child_id];
-    if (child_state.encoding_ != encoding_t::UNARY_PATH && child_state.encoding_ != encoding_t::UP_REMAP) {
-      return false;
-    }
-    // extend existing unary path
-    state.remap_ += child_state.remap_;
-    state.remap_.set1(alphabet_.encode(trie_->get_label(pos)));
-    state.remap_.build_index();
-    state.depth_ = child_state.depth_ + 1;
-    state.num_leaves_ = child_state.num_leaves_;
-    state.num_macros_ = child_state.num_macros_;
-    size_t enc_cost_unary_path = space_cost_unary_path(child_state.depth_ + 1, alphabet_.alphabet_size());
-    size_t enc_cost_up_remap = space_cost_unary_path_remap(child_state.depth_ + 1, state.remap_.alphabet_size());
-    if (enc_cost_unary_path <= enc_cost_up_remap) {
-      state.encoding_ = encoding_t::UNARY_PATH;
-      state.enc_cost_ = enc_cost_unary_path + (child_state.enc_cost_ - child_state.self_enc_cost_);
-      state.self_enc_cost_ = enc_cost_unary_path;
-    } else {
-      state.encoding_ = encoding_t::UP_REMAP;
-      state.enc_cost_ = enc_cost_up_remap + (child_state.enc_cost_ - child_state.self_enc_cost_);
-      state.self_enc_cost_ = enc_cost_up_remap;
-    }
-    return true;
-  }
+    uint32_t path_len = path.size();
+    for (int i = path_len - 1; i >= 0; i--) {
+      state_t &state_i = states_[trie_->node_id(path[i])];
 
-  void optimize_unary_path(uint32_t pos, uint32_t pattern_len) {
-    uint32_t node_id = trie_->node_id(pos);
-    state_s &state = states_[node_id];
-    size_t best_cost = space_cost_total(state);
-    assert(!state.suffix_path_);
-
-    state_s s;
-    s.remap_.set1(0);
-    for (uint32_t depth = 1; depth <= state.path_len_; depth++) {
-      assert(trie_->node_degree(pos) == 1);
-      assert(trie_->has_child(pos));
-
-      uint32_t child = trie_->child_pos(pos);
-      uint32_t child_id = trie_->node_id(child);
-      state_s &child_state = states_[child_id];
-      assert(child_state.encoding_ != encoding_t::UNARY_PATH && child_state.encoding_ != encoding_t::UP_REMAP);
-
-      // TODO: handle recursive compression
-      s.depth_ = depth;
-      s.remap_.set1(alphabet_.encode(trie_->get_label(pos)));
-      s.remap_.build_index();
-      size_t enc_cost_unary_path = space_cost_unary_path(depth, alphabet_.alphabet_size());
-      size_t enc_cost_up_remap = space_cost_unary_path_remap(depth, s.remap_.alphabet_size());
-      s.enc_cost_ = std::min(enc_cost_unary_path, enc_cost_up_remap) + child_state.enc_cost_;
-      s.self_enc_cost_ = std::min(enc_cost_unary_path, enc_cost_up_remap);
-      s.encoding_ = (enc_cost_unary_path <= enc_cost_up_remap ? encoding_t::UNARY_PATH : encoding_t::UP_REMAP);
-      s.num_macros_ = child_state.num_macros_ + 1;
-      s.num_leaves_ = child_state.num_leaves_;
-
-      if (space_cost_total(s) <= space_cost_total(state)) {
-        state.encoding_ = s.encoding_;
-        state.depth_ = s.depth_;
-        state.enc_cost_ = s.enc_cost_;
-        state.self_enc_cost_ = s.self_enc_cost_;
-        state.num_macros_ = s.num_macros_;
-        state.num_leaves_ = s.num_leaves_;
-        state.remap_ = s.remap_;
+      if (i == path_len - 1) {
+        init_suffix_path(state_i, key[i]);
+      } else if (pattern_len_ == 0 || path_len - i + 1 < pattern_len_ ||
+                 count_pattern(key, i) < min_occur_) {
+        state_t &child_state = states_[trie_->node_id(path[i+1])];
+        assert(child_state.encoding_ == encoding_t::UNARY_PATH || child_state.encoding_ == encoding_t::UP_REMAP);
+        byte_extend_path(state_i, child_state, key[i]);
+      } else {
+        printf("not implemented\n");
+        exit(0);
       }
     }
   }
 
+  void optimize_internal_path(uint32_t pos) {
+    while (pos > 0) {  // move to the upper end of unary path
+      uint32_t parent = trie_->parent_pos(pos);
+      if (trie_->node_degree(parent) > 1) {
+        break;
+      }
+      pos = parent;
+    }
+
+    uint32_t root_id = trie_->node_id(pos);
+    uint32_t path_len = states_[root_id].path_len_;
+
+    std::vector<uint32_t> path(path_len);
+    key_type key;
+    key.reserve(path_len);
+    for (uint32_t i = 0; i < path_len; i++) {
+      assert(trie_->node_degree(pos) == 1);
+      assert(trie_->has_child(pos));
+      path[i] = pos;
+      key.push_back(trie_->get_label(pos));
+      pos = trie_->child_pos(pos);
+    }
+    state_t &desc_state = states_[trie_->node_id(pos)];
+
+    for (int i = path_len - 1; i >= 0; i--) {  // optimize bottom up
+      state_t &state_i = states_[trie_->node_id(path[i])];
+
+      if (i == path_len - 1) {  // init path
+        init_internal_path(state_i, desc_state, key[i]);
+      } else if (pattern_len_ == 0 || path_len - i + 1 < pattern_len_ ||
+                 count_pattern(key, i) < min_occur_) {  // byte extend
+        state_t &child_state = states_[trie_->node_id(path[i+1])];
+        assert(child_state.encoding_ == encoding_t::UNARY_PATH || child_state.encoding_ == encoding_t::UP_REMAP);
+        byte_extend_path(state_i, child_state, key[i]);
+      } else {
+        printf("not implemented\n");
+        exit(0);
+      }
+    }
+  }
+
+  // extract, deduplicate and sort all patterns
+  void extract_patterns(std::vector<key_type> &ret) const {
+    ret.clear();
+    if (pattern_len_ == 0) {  // next trie disabled
+      return;
+    }
+
+    std::unordered_set<key_type> patterns;
+    std::queue<uint32_t> queue;
+    queue.push(0);
+
+    auto push_child = [&](uint32_t pos) {
+      if (trie_->has_child(pos)) {
+        queue.push(trie_->child_pos(pos));
+      }
+    };
+
+    while (!queue.empty()) {
+      uint32_t pos = queue.front();
+      queue.pop();
+
+      const state_t &state = states_[trie_->node_id(pos)];
+      uint32_t depth = state.depth_;
+      if (state.encoding_ != encoding_t::UNARY_PATH && state.encoding_ != encoding_t::UP_REMAP) {
+        typename trie_t::walker walker(trie_, pos);
+        walker.get_min_key(depth);
+        push_child(walker.pos_);
+        while (walker.next(depth)) {
+          push_child(walker.pos_);
+        }
+        continue;
+      }
+      uint32_t i = 0;
+      while (i < depth) {
+        const state_t &s = states_[trie_->node_id(pos)];
+        assert(s.encoding_ == encoding_t::UNARY_PATH || s.encoding_ == encoding_t::UP_REMAP);
+        assert(s.depth_ == s.path_len_);
+        if (s.pattern_len_ == 0) {
+          if (trie_->has_child(pos)) {
+            pos = trie_->child_pos(pos);
+          }
+          i++;
+          continue;
+        }
+        key_type pattern;
+        pattern.push_back(trie_->get_label(pos));
+        for (uint32_t j = 1; j < s.pattern_len_; j++) {
+          assert(trie_->has_child(pos));
+          pos = trie_->child_pos(pos);
+          pattern.push_back(trie_->get_label(pos));
+        }
+        DEBUG( printf("extracted pattern: %s\n", pattern.c_str()); )
+        patterns.insert(std::move(pattern));
+        i += s.pattern_len_;
+      }
+      if (!state.suffix_path_) {
+        queue.push(pos);
+      }
+    }
+    ret.assign(patterns.begin(), patterns.end());
+    std::sort(ret.begin(), ret.end());
+  }
+
+  void init_suffix_path(state_t &state, uint8_t label) {
+    state.pattern_len_ = 0;
+
+    state.remap_.set1(terminator_);
+    state.remap_.set1(alphabet_.encode(label));
+    state.remap_.build_index();
+
+    state.depth_ = state.path_len_;
+    size_t enc_cost = space_cost_unary_path(state);
+    state.encoding_ = encoding_t::UNARY_PATH;
+    state.enc_cost_ = enc_cost;
+    state.self_enc_cost_ = enc_cost;
+
+    state.num_leaves_ = 1;
+    state.num_macros_ = 1;
+  }
+
+  void init_internal_path(state_t &state, const state_t &child_state, uint8_t label) {
+    state.pattern_len_ = 0;
+
+    state.remap_.clear();
+    state.remap_.set1(terminator_);
+    state.remap_.set1(alphabet_.encode(label));
+    state.remap_.build_index();
+
+    state.depth_ = state.path_len_;
+    size_t enc_cost = space_cost_unary_path(state);
+    state.encoding_ = encoding_t::UNARY_PATH;
+    state.enc_cost_ = enc_cost + child_state.enc_cost_;
+    state.self_enc_cost_ = enc_cost;
+
+    state.num_leaves_ = child_state.num_leaves_;
+    state.num_macros_ = child_state.num_macros_ + 1;
+  }
+
+  void byte_extend_path(state_t &state, const state_t &child_state, uint8_t label) {
+    state.pattern_len_ = 0;
+
+    state.remap_ = child_state.remap_;
+    state.remap_.set1(alphabet_.encode(label));
+    state.remap_.build_index();
+
+    state.depth_ = state.path_len_;
+    size_t enc_cost = space_cost_unary_path(state);
+    size_t enc_cost_remap = space_cost_unary_path_remap(state);
+    state.encoding_ = (enc_cost <= enc_cost_remap ? encoding_t::UNARY_PATH : encoding_t::UP_REMAP);
+    state.self_enc_cost_ = std::min(enc_cost, enc_cost_remap);
+    state.enc_cost_ = child_state.enc_cost_ - child_state.self_enc_cost_ + state.self_enc_cost_;
+
+    state.num_macros_ = child_state.num_macros_;
+    state.num_leaves_ = child_state.num_leaves_;
+  }
+
   void get_global_alphabet() {
-    alphabet_.set1(0);  // 0 is always reserved for terminator
+    alphabet_.set1(terminator_);  // 0 is always reserved for terminator
     for (size_t i = 0; i < trie_->labels_.size(); i++) {
       alphabet_.set1(trie_->get_label(i));
     }
@@ -541,7 +658,7 @@ class CoCoOptimizer {
     return enc_cost + ptr_size*num_macros + 2*num_leaves;
   }
 
-  auto space_cost_total(const state_s &state) const -> size_t {
+  auto space_cost_total(const state_t &state) const -> size_t {
     return space_cost_total(state.enc_cost_, state.num_macros_, state.num_leaves_);
   }
 
@@ -641,22 +758,21 @@ class CoCoOptimizer {
 
   // type + encoding
   auto space_cost_unary_path(uint32_t depth, uint32_t alphabet_size) const -> size_t {
-    // TODO: handle recursive
     uint32_t label_width = log2_ceil(alphabet_size);
     return encoding_bits_ + depth * label_width;
   }
 
-  // unary path encoding + local alphabet
-  auto space_cost_unary_path_remap(uint32_t depth, uint32_t alphabet_size) const -> size_t {
-    return space_cost_unary_path(depth, alphabet_size) + alphabet_.alphabet_size();
+  auto space_cost_unary_path(const state_t &state) const -> size_t {
+    return space_cost_unary_path(state.depth_, alphabet_.alphabet_size());
   }
 
-  // type + prefix key indicator + link + amortized space cost of pattern
-  auto space_cost_recursive(uint32_t pattern_len, uint32_t link_bits, uint32_t count) const -> size_t {
-    if (pattern_len == 0) {
-      return std::numeric_limits<size_t>::max();
-    }
-    return encoding_bits_ + 1 + link_bits + pattern_len/count;
+  // unary path encoding + local alphabet
+  auto space_cost_unary_path_remap(uint32_t depth, uint32_t alphabet_size) const -> size_t {
+    return space_cost_unary_path(depth, alphabet_size) + alphabet_.alphabet_size() - 1;
+  }
+
+  auto space_cost_unary_path_remap(const state_t &state) const -> size_t {
+    return space_cost_unary_path_remap(state.depth_, state.remap_.alphabet_size());
   }
 
   // type + prefix key indicator + depth (+ num codes) + first code
@@ -682,13 +798,31 @@ class CoCoOptimizer {
     return space_cost_dense(universe, code_len, num_keys, prefix_key) + alphabet_.alphabet_size() - 1;
   }
 
-  std::vector<state_s> states_;
+  auto insert_pattern(const key_type &key, uint32_t begin) -> uint8_t {
+    return counter_.insert(key.c_str() + begin, pattern_len_);
+  }
+
+  auto count_pattern(const key_type &key, uint32_t begin) const -> uint8_t {
+    if (pattern_len_ == 0) {
+      return 0;
+    }
+    return counter_.count(key.c_str() + begin, pattern_len_);
+  }
+
+  std::vector<state_t> states_;
 
   alphabet_t alphabet_;  // global alphabet
 
+  counter_type counter_;
+
   const trie_t *trie_{nullptr};
 
-  template<typename K> friend class CoCoCC;
+  uint32_t space_relaxation_{0};
+  uint32_t pattern_len_{0};  // unary paths must be at least this long to be considered for double trie compression (0 means disabled)
+  uint32_t min_occur_{0};    // patterns must occur at least this many times to be considered for double trie compression
+  uint32_t link_bits_{0};    // an (upper bounding) estimate of # bits consumed by each link pointer
+
+  template<typename C, bool r> friend class CoCoCC;
 };
 
 #undef DEBUG

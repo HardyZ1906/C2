@@ -74,6 +74,12 @@ class LS4CoCo {
       }
 
       template<int bvnum>
+      auto rank0(uint32_t size) const -> uint32_t {
+        static_assert(bvnum == 0 || bvnum == 1);
+        return size - rank1<bvnum>(size);
+      }
+
+      template<int bvnum>
       auto select1(uint32_t rank) const -> uint32_t {
         static_assert(bvnum == 0 || bvnum == 1);
         if constexpr (bvnum == 0) {
@@ -274,7 +280,14 @@ class LS4CoCo {
       }
     }
 
-    // select the `rank`-th bit from bv<bvnum>; used in build phase only
+    template<int bvnum>
+    auto rank0(uint32_t size) const -> uint32_t {
+      static_assert(bvnum == 0 || bvnum == 1);
+      assert(size <= size_);
+      return size - rank1(size);
+    }
+
+    // select the `rank`-th 1 bit from bv<bvnum>; used in build phase only
     template<int bvnum>
     auto select1(uint32_t rank) const -> uint32_t {
       static_assert(bvnum == 0 || bvnum == 1);
@@ -696,7 +709,7 @@ class LS4CoCo {
 
   auto value_pos(uint32_t pos) const -> uint32_t {
     assert(!has_child(pos));
-    return pos - bv_.rank1<0>(pos);
+    return bv_.rank0<0>(pos);
   }
 
   auto child_pos(uint32_t pos) const -> uint32_t {
@@ -760,7 +773,6 @@ class LS4CoCo {
   uint32_t depth_{0};
 
   friend class walker;
-  template<typename K> friend class CoCoOptimizer;
-  template<typename K> friend class CoCoCC;
-  template<typename K> friend class CoCoRecursive;
+  template <typename K> friend class CoCoOptimizer;
+  template <typename K, bool r> friend class CoCoCC;
 };

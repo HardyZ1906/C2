@@ -3,8 +3,10 @@
 #include "utils.hpp"
 #include "alphabet.hpp"
 #include "louds_cc.hpp"
+#include "louds_cc2.hpp"
 #include "ls4coco.hpp"
 #include "coco_optimizer.hpp"
+#include "ls4coco.hpp"
 
 #include "../lib/ds2i/succinct/bit_vector.hpp"
 #include "../lib/ds2i/succinct/bp_vector.hpp"
@@ -23,19 +25,22 @@
 #endif
 
 
-template<typename Key>
+template<typename Key, bool reverse = false>
 class CoCoCC {
  public:
-  using optimizer = CoCoOptimizer<Key>;
-  using encoding_t = optimizer::encoding_t;
   using key_type = Key;
+  using optimizer = CoCoOptimizer<key_type>;
+  using encoding_t = optimizer::encoding_t;
+  using next_trie_t = CoCoCC<Key, true>;
+  using topo_t = std::conditional<reverse, LoudsCC2, LoudsCC>::type;
 
+  static constexpr bool reverse_ = reverse;
   static constexpr uint8_t encoding_bits_ = optimizer::encoding_bits_;
   static constexpr uint32_t max_depth_ = optimizer::max_depth_;
   static constexpr uint8_t depth_bits_ = optimizer::depth_bits_;
   static constexpr uint32_t degree_threshold_ = optimizer::degree_threshold_;
   static constexpr uint32_t bv_block_sz_ = optimizer::bv_block_sz_;
-  static constexpr uint8_t terminator_ = 0;
+  static constexpr uint8_t terminator_ = optimizer::terminator_;
 
   CoCoCC() = default;
 
@@ -44,10 +49,22 @@ class CoCoCC {
   }
 
   template<typename Iterator>
-  void build(Iterator begin, Iterator end) {
+  CoCoCC(Iterator begin, Iterator end, uint32_t space_relaxation = 0,
+         uint32_t pattern_len = 10, uint32_t min_occur = 20) {
+    build(begin, end, space_relaxation, pattern_len, min_occur);
+  }
+
+  template<typename Iterator>
+  void build(Iterator begin, Iterator end, uint32_t space_relaxation = 0,
+             uint32_t pattern_len = 10, uint32_t min_occur = 20) {
+    if constexpr (reverse_) {
+      pattern_len = 0;
+      min_occur = 0;
+    }
     typename optimizer::trie_t trie;
     trie.build(begin, end);
     optimizer opt(&trie);
+    opt.optimize(space_relaxation, pattern_len, min_occur);
     build(opt);
   }
 
@@ -60,6 +77,16 @@ class CoCoCC {
 
     std::queue<uint32_t> queue;
     queue.push(0);
+
+    if constexpr (!reverse_) {
+      std::vector<key_type> patterns;
+      opt.extract_patterns(patterns);
+      if (!patterns.empty()) {
+        next_trie_ = new next_trie_t();
+        next_trie_->build(patterns.begin(), patterns.end(), 0, 0, 0);
+        link_bits_ = std::max(log2_ceil(patterns.size()), 1);
+      }
+    }
 
     auto push_child = [&](uint32_t pos) {
       if (opt.trie_->has_child(pos)) {
@@ -81,7 +108,7 @@ class CoCoCC {
       ptrs_[macro_id++] = bv.size();  // set pointer
 
       uint32_t node_id = opt.trie_->node_id(pos);
-      typename optimizer::state_s state = opt.states_[node_id];
+      typename optimizer::state_t state = opt.states_[node_id];
 
       bool prefix_key = false;
       if (opt.trie_->get_label(pos) == terminator_) {  // mark key as null instead of encoding it
@@ -108,15 +135,15 @@ class CoCoCC {
 
       if (encoding == encoding_t::UNARY_PATH || encoding == encoding_t::UP_REMAP) {
         assert(!prefix_key);
+        DEBUG( printf("key %d: %s\n", key_idx++, walker.key().c_str()); )
         bv.append_bits(static_cast<uint64_t>(encoding), encoding_bits_);
         if (encoding == encoding_t::UNARY_PATH) {
-          encode_unary_path(bv, walker.key());
+          encode_unary_path(bv, opt, pos);
         } else {
           write_alphabet(bv, state.remap_);
-          encode_unary_path_remap(bv, walker.key(), state.remap_);
+          encode_unary_path_remap(bv, opt, pos, state.remap_);
         }
         topo_.add_node(1);
-        DEBUG( printf("key %d: %s\n", key_idx++, walker.key().c_str()); )
         continue;
       }
 
@@ -182,6 +209,10 @@ class CoCoCC {
     topo_.build();
     sdsl::util::bit_compress(ptrs_);
     new (&macros_) succinct::bit_vector(&bv);
+
+    if (!reverse_ && next_trie_ != nullptr) {
+      next_trie_->finish();
+    }
   }
 
   auto lookup(const key_type &key) const -> uint32_t {
@@ -198,7 +229,7 @@ class CoCoCC {
       if (topo_.is_leaf(pos)) {
         return idx >= end ? topo_.leaf_id(pos) : -1;
       }
-      uint32_t macro_id = topo_.macro_id(pos);
+      uint32_t macro_id = topo_.internal_id(pos);
       succinct::bit_vector::enumerator it(macros_, ptrs_[macro_id]);
       size_t next = ptrs_[macro_id + 1];
       encoding_t encoding = static_cast<encoding_t>(it.take(encoding_bits_));
@@ -217,6 +248,10 @@ class CoCoCC {
             return -1;
           }
         }
+        DEBUG(
+          printf("matched unary path, key: %s, pos %d, macro node %d, encoding = %d, depth = %d\n",
+                 key.substr(idx, depth).c_str(), pos, macro_id, encoding, depth);
+        )
         idx += depth;
         pos = topo_.child_pos(pos);
         continue;
@@ -238,10 +273,16 @@ class CoCoCC {
       // read first code
       code_t first_code, code;
       if (!(static_cast<int>(encoding) & 0x4)) {  // no remap
+        if (!is_legal(key, idx, depth)) {
+          return -1;
+        }
         code = encode(key, idx, depth);
         first_code = it.take(optimizer::code_len(alphabet_, depth));
       } else {
         read_alphabet(it, remap);
+        if (!is_legal(key, idx, depth, remap)) {
+          return -1;
+        }
         code = encode(key, idx, depth, remap);
         first_code = it.take(optimizer::code_len(remap, depth));
       }
@@ -277,9 +318,110 @@ class CoCoCC {
         return -1;
       }
       assert(child_id < degree);
+      DEBUG(
+        printf("key: %s, code = %ld, pos %d, macro node %d, child %d, encoding = %d, depth = %d, degree = %d, prefix key = %d\n",
+               key.substr(idx, depth).c_str(), code, pos + child_id, macro_id, child_id, encoding, depth, degree, prefix_key);
+      )
       idx += depth;
       pos = topo_.child_pos(pos + child_id);
     }
+  }
+
+  // check if `key[begin:]` is able to reach the root starting from leaf `leaf_id`
+  // returns the number of labels matched on match and -1 on mismatch
+  template <bool rev = reverse, typename = std::enable_if_t<rev>>
+  auto match_rev(const key_type &key, uint32_t begin, uint32_t leaf_id) const -> uint32_t {
+    uint32_t pos = topo_.select_leaf(leaf_id);
+    uint32_t idx = begin;
+
+    while (pos > 0) {
+      pos = topo_.parent_pos(pos);
+      uint32_t macro_id = topo_.internal_id(pos);
+      succinct::bit_vector::enumerator it(macros_, ptrs_[macro_id]);
+      size_t next = ptrs_[macro_id + 1];
+      encoding_t encoding = static_cast<encoding_t>(it.take(encoding_bits_));
+      Alphabet remap;
+
+      if (encoding == encoding_t::UNARY_PATH || encoding == encoding_t::UP_REMAP) {
+        assert(topo_.degree(pos) == 1);
+        uint32_t depth;
+        if (encoding == encoding_t::UNARY_PATH) {
+          if ((depth = match_unary_path_rev(it, key, idx, next)) == -1) {
+            return -1;
+          }
+        } else {  // UP_REMAP
+          read_alphabet(it, remap);
+          if ((depth = match_unary_path_remap_rev(it, key, remap, idx, next)) == -1) {
+            return -1;
+          }
+        }
+        DEBUG(
+          printf("matched unary path, key: %s, pos %d, macro node %d, encoding = %d, depth = %d\n",
+                 key.substr(idx, depth).c_str(), pos, macro_id, encoding, depth);
+        )
+        idx += depth;
+        continue;
+      }
+
+      bool prefix_key = it.take(1);
+      uint32_t node_start = topo_.node_start(pos);
+      if (prefix_key && pos == node_start) {
+        continue;
+      }
+      uint32_t depth = it.take(depth_bits_) + 1;
+    #ifdef __DEGREE_IN_PLACE__
+      bool degree_in_place = it.take(1);
+      uint32_t degree = (degree_in_place ? ds2i::read_delta(it) : topo_.degree(node_start));
+    #else
+      uint32_t degree = topo_.degree(node_start);
+    #endif
+      assert(degree >= 1 + prefix_key);
+      uint32_t num_codes = degree - prefix_key - 1;
+      // read first code
+      code_t code;
+      if (!(static_cast<int>(encoding) & 0x4)) {  // no remap
+        code = it.take(optimizer::code_len(alphabet_, depth));
+      } else {
+        read_alphabet(it, remap);
+        code = it.take(optimizer::code_len(remap, depth));
+      }
+      // get target code
+      uint32_t key_id = pos - node_start - prefix_key;
+      if (key_id > 0) {
+        switch (encoding) {
+         case encoding_t::ELIAS_FANO:
+         case encoding_t::EF_REMAP:
+          code += get_elias_fano(it, key_id - 1, num_codes) + 1;
+          break;
+         case encoding_t::PACKED:
+         case encoding_t::PA_REMAP:
+          code += get_packed(it, key_id - 1, num_codes, next) + 1;
+          break;
+         case encoding_t::BITVECTOR:
+         case encoding_t::BV_REMAP:
+          code += get_bitvector(it, key_id - 1, num_codes, next) + 1;
+          break;
+         case encoding_t::DENSE:
+         case encoding_t::DE_REMAP:
+          code += get_dense(it, key_id - 1) + 1;
+          break;
+         default: assert(false);  // should not be reachable
+        }
+      }
+      DEBUG(
+        printf("key: %s, code = %ld, pos %d, macro node %d, child %d, encoding = %d, depth = %d, degree = %d, prefix key = %d\n",
+               key.substr(idx, depth).c_str(), code, pos, macro_id, key_id + prefix_key, encoding, depth, degree, prefix_key);
+      )
+      // match
+      depth = (static_cast<int>(encoding) & 0x4) ? match_code_rev_remap(key, idx, code, remap)
+                                                 : match_code_rev(key, idx, code);
+      if (depth == -1) {
+        return -1;
+      }
+      idx += depth;
+      pos = node_start;
+    }
+    return idx - begin;
   }
 
   auto encoding_size() const -> size_t {
@@ -291,7 +433,7 @@ class CoCoCC {
   }
 
   auto get_num_nodes() const -> std::pair<uint32_t, uint32_t> {
-    return {topo_.num_macros(), topo_.num_leaves()};
+    return {topo_.num_internals(), topo_.num_leaves()};
   }
  private:
   void encode_elias_fano(succinct::bit_vector_builder &bv, const std::vector<code_t> &codes) {
@@ -332,21 +474,108 @@ class CoCoCC {
     }
   }
 
-  void encode_unary_path(succinct::bit_vector_builder &bv, const key_type &key) {
-    size_t encoded_len = 0;
-    uint32_t label_width = log2_ceil(alphabet_.alphabet_size());
-    for (uint32_t i = 0; i < key.size(); i++) {
-      auto label = encode(key[i]);
-      bv.append_bits(static_cast<uint64_t>(label), label_width);
+  void encode_unary_path(succinct::bit_vector_builder &bv, const optimizer &opt, uint32_t pos) {
+    if constexpr (reverse_) {
+      // we don't encode the terminator as the second trie does not support double trie encoding
+      uint32_t label_width = std::max(1, log2_ceil(alphabet_.alphabet_size() - 1));
+      const typename optimizer::state_t &state = opt.states_[opt.trie_->node_id(pos)];
+      uint32_t depth = state.depth_;
+
+      for (uint32_t i = 0; i < depth; i++) {
+        const typename optimizer::state_t &s = opt.states_[opt.trie_->node_id(pos)];
+        assert(s.encoding_ == encoding_t::UNARY_PATH || s.encoding_ == encoding_t::UP_REMAP);
+        assert(s.depth_ == s.path_len_);
+        uint8_t label = encode(opt.trie_->get_label(pos));
+        assert(label > 0);
+        bv.append_bits(static_cast<uint64_t>(label - 1), label_width);
+        if (opt.trie_->has_child(pos)) {
+          pos = opt.trie_->child_pos(pos);
+        }
+      }
+    } else {
+      uint32_t label_width = log2_ceil(alphabet_.alphabet_size());
+      const typename optimizer::state_t &state = opt.states_[opt.trie_->node_id(pos)];
+      uint32_t depth = state.depth_;
+
+      uint32_t i = 0;
+      while (i < depth) {
+        const typename optimizer::state_t &s = opt.states_[opt.trie_->node_id(pos)];
+        assert(s.encoding_ == encoding_t::UNARY_PATH || s.encoding_ == encoding_t::UP_REMAP);
+        assert(s.depth_ == s.path_len_);
+        if (s.pattern_len_ == 0) {
+          bv.append_bits(static_cast<uint64_t>(encode(opt.trie_->get_label(pos))), label_width);
+          if (opt.trie_->has_child(pos)) {
+            pos = opt.trie_->child_pos(pos);
+          }
+          i++;
+          continue;
+        }
+        key_type pattern;
+        pattern.push_back(opt.trie_->get_label(pos));
+        for (uint32_t j = 1; j < s.pattern_len_; j++) {
+          assert(opt.trie_->has_child(pos));
+          pos = opt.trie_->child_pos(pos);
+          pattern.push_back(opt.trie_->get_label(pos));
+        }
+        bv.append_bits(static_cast<uint64_t>(terminator_), label_width);  // insert a terminator to mark link
+        auto link = next_trie_->lookup(pattern);
+        assert(link != -1);
+        bv.append_bits(static_cast<uint64_t>(link), link_bits_);
+        i += s.pattern_len_;
+      }
     }
   }
 
-  void encode_unary_path_remap(succinct::bit_vector_builder &bv, const key_type &key, const Alphabet &remap) {
-    size_t encoded_len = 0;
-    uint32_t label_width = log2_ceil(remap.alphabet_size());
-    for (uint32_t i = 0; i < key.size(); i++) {
-      auto label = encode(key[i], remap);
-      bv.append_bits(static_cast<uint64_t>(label), label_width);
+  void encode_unary_path_remap(succinct::bit_vector_builder &bv, const optimizer &opt,
+                               uint32_t pos, const Alphabet &remap) {
+    if constexpr (reverse) {
+      // we don't encode the terminator as the second trie does not support double trie encoding
+      uint32_t label_width = std::max(1, log2_ceil(remap.alphabet_size() - 1));
+      const typename optimizer::state_t &state = opt.states_[opt.trie_->node_id(pos)];
+      uint32_t depth = state.depth_;
+
+      for (uint32_t i = 0; i < depth; i++) {
+        const typename optimizer::state_t &s = opt.states_[opt.trie_->node_id(pos)];
+        assert(s.encoding_ == encoding_t::UNARY_PATH || s.encoding_ == encoding_t::UP_REMAP);
+        assert(s.depth_ == s.path_len_);
+        uint8_t label = encode(opt.trie_->get_label(pos), remap);
+        assert(label > 0);
+        bv.append_bits(static_cast<uint64_t>(label - 1), label_width);
+        if (opt.trie_->has_child(pos)) {
+          pos = opt.trie_->child_pos(pos);
+        }
+      }
+    } else {
+      uint32_t label_width = log2_ceil(remap.alphabet_size());
+      const typename optimizer::state_t &state = opt.states_[opt.trie_->node_id(pos)];
+      uint32_t depth = state.depth_;
+
+      uint32_t i = 0;
+      while (i < depth) {
+        const typename optimizer::state_t &s = opt.states_[opt.trie_->node_id(pos)];
+        assert(s.encoding_ == encoding_t::UNARY_PATH || s.encoding_ == encoding_t::UP_REMAP);
+        assert(s.depth_ == s.path_len_);
+        if (reverse || s.pattern_len_ == 0) {
+          bv.append_bits(static_cast<uint64_t>(encode(opt.trie_->get_label(pos), remap)), label_width);
+          if (opt.trie_->has_child(pos)) {
+            pos = opt.trie_->child_pos(pos);
+          }
+          i++;
+          continue;
+        }
+        key_type pattern;
+        pattern.push_back(opt.trie_->get_label(pos));
+        for (uint32_t j = 1; j < s.pattern_len_; j++) {
+          assert(opt.trie_->has_child(pos));
+          pos = opt.trie_->child_pos(pos);
+          pattern.push_back(opt.trie_->get_label(pos));
+        }
+        bv.append_bits(static_cast<uint64_t>(terminator_), label_width);  // insert a terminator to mark link
+        auto link = next_trie_->lookup(pattern);
+        assert(link != -1);
+        bv.append_bits(static_cast<uint64_t>(link), link_bits_);
+        i += s.pattern_len_;
+      }
     }
   }
 
@@ -421,19 +650,36 @@ class CoCoCC {
 
   // returns the number of matched labels on success and -1 on failure
   auto match_unary_path(succinct::bit_vector::enumerator &it, const key_type &key,
-                        uint32_t beg, size_t next) const -> uint32_t {
+                        uint32_t begin, size_t next) const -> uint32_t {
     uint32_t matched_len = 0;
-    uint32_t label_width = log2_ceil(alphabet_.alphabet_size());
-    while (it.position() < next) {
-      auto label = it.take(label_width);
-      if (label == terminator_) {
-        // TODO: recursive encoding
-        assert(false);
-        continue;
-      } else if (label != encode(key[beg + matched_len])) {
-        return -1;
-      } else {
-        matched_len++;
+    if constexpr (reverse_) {
+      uint32_t label_width = std::max(1, log2_ceil(alphabet_.alphabet_size() - 1));
+      assert((next - it.position()) % label_width == 0);
+      while (it.position() < next) {
+        uint8_t label = it.take(label_width) + 1;
+        if (!is_legal(key[begin + matched_len]) || label != encode(key[begin + matched_len])) {
+          return -1;
+        } else {
+          matched_len++;
+        }
+      }
+    } else {
+      uint32_t label_width = log2_ceil(alphabet_.alphabet_size());
+      while (it.position() < next) {
+        uint8_t label = it.take(label_width);
+        if (label == terminator_) {  // double trie encoding
+          uint32_t link = it.take(link_bits_);
+          uint32_t depth = next_trie_->match_rev(key, begin + matched_len, link);
+          if (depth == 0) {
+            return -1;
+          }
+          matched_len += depth;
+          continue;
+        } else if (!is_legal(key[begin + matched_len]) || label != encode(key[begin + matched_len])) {
+          return -1;
+        } else {
+          matched_len++;
+        }
       }
     }
     return matched_len;
@@ -441,22 +687,172 @@ class CoCoCC {
 
   // returns the number of matched labels; if not matched, returns -1
   auto match_unary_path_remap(succinct::bit_vector::enumerator &it, const key_type &key,
-                              const Alphabet &remap, uint32_t beg, size_t next) const -> uint32_t {
+                              const Alphabet &remap, uint32_t begin, size_t next) const -> uint32_t {
     uint32_t matched_len = 0;
-    uint32_t label_width = log2_ceil(remap.alphabet_size());
-    while (it.position() < next) {
-      auto label = it.take(label_width);
-      if (label == terminator_) {
-        // TODO: recursive encoding
-        assert(false);
-        continue;
-      } else if (label != encode(key[beg + matched_len], remap)) {
-        return -1;
-      } else {
-        matched_len++;
+    if constexpr (reverse_) {
+      uint32_t label_width = std::max(1, log2_ceil(remap.alphabet_size() - 1));
+      assert((next - it.position()) % label_width == 0);
+      while (it.position() < next) {
+        uint8_t label = it.take(label_width) + 1;
+        if (!is_legal(key[begin + matched_len], remap) || label != encode(key[begin + matched_len], remap)) {
+          return -1;
+        } else {
+          matched_len++;
+        }
+      }
+    } else {
+      uint32_t label_width = log2_ceil(alphabet_.alphabet_size());
+      while (it.position() < next) {
+        uint8_t label = it.take(label_width);
+        if (label == terminator_) {  // double trie encoding
+          uint32_t link = it.take(link_bits_);
+          uint32_t depth = next_trie_->match_rev(key, begin + matched_len, link);
+          if (depth == 0) {
+            return -1;
+          }
+          matched_len += depth;
+          continue;
+        } else if (!is_legal(key[begin + matched_len, remap]) || label != encode(key[begin + matched_len], remap)) {
+          return -1;
+        } else {
+          matched_len++;
+        }
       }
     }
     return matched_len;
+  }
+
+  auto get_elias_fano(succinct::bit_vector::enumerator &it, uint32_t key_id, uint32_t num_codes) const -> code_t {
+    code_t universe = ds2i::read_delta(it);
+    typename ds2i::compact_elias_fano<code_t>::enumerator enu(macros_, it.position(), universe, num_codes, params);
+    auto ret = enu.move(key_id);
+    assert(ret.first == key_id);
+    return ret.second;
+  }
+
+  auto get_packed(succinct::bit_vector::enumerator &it, uint32_t key_id, uint32_t num_codes, size_t next) const -> code_t {
+    assert((next - it.position()) % num_codes == 0);
+    size_t pos = it.position();
+    uint32_t width = (next - pos) / num_codes;
+    code_t ret = macros_.get_bits(pos + key_id*width, width);
+    return ret;
+  }
+
+  auto get_bitvector(succinct::bit_vector::enumerator &it, uint32_t key_id, uint32_t num_codes, size_t next) const -> code_t {
+    size_t pos = it.position();
+    uint32_t idx_width = width_in_bits(num_codes);
+    size_t len = next - pos;
+    size_t num_blocks = len / (idx_width + bv_block_sz_);
+    size_t bv_start = pos + idx_width*num_blocks;
+
+    uint32_t target_rank = key_id + 1;
+    uint32_t block_idx;
+    if (num_blocks == 0 || target_rank <= macros_.get_bits(pos, idx_width)) {
+      block_idx = 0;
+    } else {
+      uint32_t left = 0, right = num_blocks - 1;
+      uint32_t cutoff = 64*8*8 / idx_width;  // 8 cachelines
+      while (left + cutoff < right) {
+        uint32_t mid = (left + right + 1) / 2;
+        if (macros_.get_bits(pos + mid*idx_width, idx_width) < target_rank) {
+          left = mid;
+        } else {
+          right = mid - 1;
+        }
+      }
+      while (left + 1 < num_blocks && macros_.get_bits(pos + (left+1)*idx_width, idx_width) < target_rank) {
+        left++;
+      }
+      target_rank -= macros_.get_bits(pos + left*idx_width, idx_width);
+      block_idx = left + 1;
+    }
+    it.move(bv_start + block_idx*bv_block_sz_);
+    while (it.position() + 64 < next) {
+      uint64_t bits = it.take(64);
+      uint32_t rank = static_cast<uint32_t>(__builtin_popcountll(bits));
+      if (target_rank <= rank) {
+        return it.position() + selectll(bits, target_rank) - 64 - bv_start;
+      }
+      target_rank -= rank;
+    }
+    size_t p = it.position();
+    uint64_t bits = it.take(next - p);
+    assert(static_cast<uint32_t>(__builtin_popcountll(bits)) >= target_rank);
+    return p + selectll(bits, target_rank) - bv_start;
+  }
+
+  auto get_dense(succinct::bit_vector::enumerator &it, uint32_t key_id) const -> code_t {
+    return key_id;
+  }
+
+  auto match_code_rev(const key_type &key, uint32_t begin, code_t code) const -> uint32_t {
+    assert(code > 0);
+
+    uint32_t base = alphabet_.alphabet_size();
+    uint32_t matched_len = 0;
+    while (code % base == 0) {
+      code /= base;
+    }
+    while (code > 0) {
+      uint8_t label = code % base;
+      if (begin + matched_len >= key.size() || !is_legal(key[begin + matched_len]) ||
+          encode(key[begin + matched_len]) != label) {
+        return -1;
+      }
+      code /= base;
+      matched_len++;
+    }
+    return matched_len;
+  }
+
+  auto match_code_rev_remap(const key_type &key, uint32_t begin, code_t code, const Alphabet &remap) const -> uint32_t {
+    assert(code > 0);
+
+    uint32_t base = remap.alphabet_size();
+    uint32_t matched_len = 0;
+    while (code % base == 0) {
+      code /= base;
+    }
+    while (code > 0) {
+      uint8_t label = code % base;
+      if (begin + matched_len >= key.size() || !is_legal(key[begin + matched_len], remap) ||
+          encode(key[begin + matched_len], remap) != label) {
+        return -1;
+      }
+      code /= base;
+      matched_len++;
+    }
+    return matched_len;
+  }
+
+  auto match_unary_path_rev(succinct::bit_vector::enumerator &it, const key_type &key,
+                            uint32_t begin, size_t next) const -> uint32_t {
+    uint32_t label_width = log2_ceil(alphabet_.alphabet_size() - 1);
+    assert((next - it.position()) % label_width == 0);
+    size_t start = it.position();
+    uint32_t depth = (next - start) / label_width;
+    for (uint32_t i = 0; i < depth; i++) {
+      uint8_t label = macros_.get_bits(start + (depth - 1 - i)*label_width, label_width) + 1;
+      if (!is_legal(key[begin + i]) || label != encode(key[begin + i])) {
+        return -1;
+      }
+    }
+    return depth;
+  }
+
+  auto match_unary_path_remap_rev(succinct::bit_vector::enumerator &it, const key_type &key,
+                                  const Alphabet &remap, uint32_t begin, size_t next) const -> uint32_t {
+    uint32_t label_width = log2_ceil(remap.alphabet_size() - 1);
+    assert((next - it.position()) % label_width == 0);
+    size_t start = it.position();
+    uint32_t depth = (next - start) / label_width;
+    for (uint32_t i = 0; i < depth; i++) {
+      uint8_t label = macros_.get_bits(start + (depth - 1 - i)*label_width, label_width) + 1;
+      if (!is_legal(key[begin + i], remap) || label != encode(key[begin + i], remap)) {
+        return -1;
+      }
+    }
+    return depth;
   }
 
   void write_metadata(succinct::bit_vector_builder &bv, encoding_t encoding, bool prefix_key,
@@ -517,6 +913,34 @@ class CoCoCC {
 
   auto encode(uint8_t label, const Alphabet &remap) const -> uint8_t {
     return remap.encode(alphabet_.encode(label));
+  }
+
+  auto is_legal(uint8_t label) const -> bool {
+    return alphabet_.get(label);
+  }
+
+  auto is_legal(uint8_t label, const Alphabet &remap) const -> bool {
+    return alphabet_.get(label) && remap.get(alphabet_.encode(label));
+  }
+
+  auto is_legal(const key_type &key, uint32_t begin, uint32_t size) const -> bool {
+    uint32_t end = std::min(begin + size, static_cast<uint32_t>(key.size()));
+    for (uint32_t i = begin; i < end; i++) {
+      if (!is_legal(key[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  auto is_legal(const key_type &key, uint32_t begin, uint32_t size, const Alphabet &remap) const -> bool {
+    uint32_t end = std::min(begin + size, static_cast<uint32_t>(key.size()));
+    for (uint32_t i = begin; i < end; i++) {
+      if (!is_legal(key[i], remap)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   // encode key using the global alphabet
@@ -587,12 +1011,19 @@ class CoCoCC {
     return -1;
   }
 
+  template <bool rev = reverse, typename = std::enable_if_t<rev>>
+  void finish() {
+    topo_.finish();
+  }
+
+  template<typename K, bool r> friend class CoCoCC;
+
   Alphabet alphabet_;
-  LoudsCC<> topo_;
+  topo_t topo_;
+  next_trie_t *next_trie_;
   sdsl::int_vector<> ptrs_;
   succinct::bit_vector macros_;  // macro node encoding
-
-  template<typename K> friend class CoCoRecursive;
+  uint32_t link_bits_{0};  // #bits consumed by each link pointer
 };
 
 #undef DEBUG

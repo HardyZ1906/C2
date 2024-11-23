@@ -22,6 +22,13 @@ class ArrayCounter {
     std::memset(elts_, 0, sizeof(elt_t)*size_);
   }
 
+  void resize(size_t size) {
+    delete[] elts_;
+    elts_ = new elt_t[size];
+    std::memset(elts_, 0, sizeof(elt_t)*size_);
+    size_ = size;
+  }
+
   void increment(size_t pos) {
     assert(pos < size_);
     if (elts_[pos] != std::numeric_limits<elt_t>::max()) {
@@ -41,29 +48,38 @@ class ArrayCounter {
   elt_t *elts_{nullptr};
   size_t size_{0};
 
-  template<typename C> friend class CountingBloomFilter;
+  template<typename E, typename C> friend class CountingBloomFilter;
 };
 
 
-template<typename Counter = ArrayCounter<uint8_t>>
+template<typename ElementType = uint8_t, typename Counter = ArrayCounter<ElementType>>
 class CountingBloomFilter {
  public:
   using counter_type = Counter;
-  using elt_t = counter_type::elt_t;
+  using elt_t = ElementType;
 
-  CountingBloomFilter(size_t n, size_t k) : counter_(n), k_(k) {
+  CountingBloomFilter() = default;
+
+  CountingBloomFilter(size_t n, size_t k = 4) : counter_(n), k_(k) {
     assert(k <= 16);
   }
 
-  void insert(const void *key, size_t size) {
+  void resize(size_t n) {
+    counter_.resize(n);
+  }
+
+  auto insert(const void *key, size_t size) -> elt_t {
+    elt_t ret = std::numeric_limits<elt_t>::max();
     for (size_t i = 0; i < k_; i++) {  // increment all k counters
       // TODO: maybe handle collision
       size_t pos = wyhash(key, size, seeds_[i], _wyp) % counter_.size();
       counter_.increment(pos);
+      ret = std::min(ret, counter_.get(pos));
     }
+    return ret;
   }
 
-  auto count(const void *key, size_t size) -> elt_t {
+  auto count(const void *key, size_t size) const -> elt_t {
     elt_t ret = std::numeric_limits<elt_t>::max();
     for (size_t i = 0; i < k_; i++) {  // return the minimum of the k counters
       size_t pos = wyhash(key, size, seeds_[i], _wyp) % counter_.size();
@@ -79,5 +95,5 @@ class CountingBloomFilter {
     0x71DB8A80B6AE8CBFull, 0x3CA7852D9018A59Cull, 0x7B0F6C30F102C8FEull, 0x287964BCB5E3359Aull,
   };
   counter_type counter_;
-  size_t k_;  // number of hash functions
+  size_t k_{4};  // number of hash functions
 };

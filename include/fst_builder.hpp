@@ -195,9 +195,8 @@ class FstBuilder {
   std::vector<bv_builder> s_has_child_;
   std::vector<bv_builder> s_louds_;
 
-  template<typename K, int c, int f> friend class FstCC;
-  template<typename K, int c, int f> friend class LoudsDenseCC;
-  template<typename K, int c> friend class LoudsSparseCC;
+  template<typename K, int f, int c> friend class FstCC;
+  template<typename K, int f, int c> friend class LoudsDenseCC;
+  template<typename K, int f, int c> friend class LoudsSparseCC;
   template<typename K> friend class LS4CoCo;
-  template<typename K> friend class LS4CoCoRecursive; 
 };

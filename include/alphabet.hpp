@@ -30,6 +30,16 @@ struct Alphabet {
     return *this;
   }
 
+  auto operator+(const Alphabet &other) const -> Alphabet {
+    Alphabet ret;
+    ret.bits_[0] = bits_[0] | other.bits_[0];
+    ret.bits_[1] = bits_[1] | other.bits_[1];
+    ret.bits_[2] = bits_[2] | other.bits_[2];
+    ret.bits_[3] = bits_[3] | other.bits_[3];
+    ret.build_index();
+    return ret;
+  }
+
   void clear() {
     std::memset(this, 0, sizeof(Alphabet));
   }

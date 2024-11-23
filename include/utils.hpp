@@ -172,8 +172,13 @@ auto select0ll(uint64_t bits, int rank) -> int {
 }
 
 auto rank00ll(uint64_t bits, bool prev) -> int {
-  auto ret = (!prev & ~bits) + __builtin_popcountll(~bits & (~bits >> 1));
-  return ret;
+  uint64_t v = bits | (bits << 1) | prev;
+  return __builtin_popcountll(~v);
+}
+
+auto select00ll(uint64_t bits, int rank, bool prev) -> int {
+  uint64_t v = bits | (bits << 1) | prev;
+  return select0ll(v, rank);
 }
 
 auto rank(const uint64_t *bits, size_t begin, size_t end) -> size_t {

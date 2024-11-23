@@ -3,10 +3,9 @@
 #include "utils.hpp"
 
 
-template<int spill_threshold = 128>
 struct LoudsCC {
-  static_assert(spill_threshold <= 128);
-  static constexpr int spill_threshold_ = spill_threshold;
+  static constexpr int spill_threshold_ = 128;
+  static_assert(spill_threshold_ <= 128);
 
   struct BitVector {
     struct Block {
@@ -18,7 +17,7 @@ struct LoudsCC {
        * spilled - bits 0-30: spill index (only half the bits are 0, so no overflow)
        */
       uint32_t select0_;
-      uint8_t subranks_[4];  // rank1 in block before each uint64_t element
+      uint8_t subranks_[4];  // accumulative rank1 before each uint64_t element
       uint64_t bits_[4];     // 256 actual bits
 
       auto build_index() -> uint32_t {
@@ -38,6 +37,13 @@ struct LoudsCC {
         return size - rank1(size);
       }
 
+      auto rank00(bool prev) const -> uint32_t {
+        return rank00ll(bits_[0], prev) +
+               rank00ll(bits_[1], bits_[0] >> 63) +
+               rank00ll(bits_[2], bits_[1] >> 63) +
+               rank00ll(bits_[3], bits_[2] >> 63);
+      }
+
       auto rank00(uint32_t size, bool prev) const -> uint32_t {
         uint32_t ret = 0;
         for (int i = 0; i < size / 64; i++) {  // maybe make branchless?
@@ -51,15 +57,15 @@ struct LoudsCC {
       auto select0(uint32_t rank) const -> uint32_t {
         if (rank <= 64*2 - subranks_[2]) {
           if (rank <= 64*1 - subranks_[1]) {
-            return 0*64 + select0ll(bits_[0], rank);
+            return 64*0 + select0ll(bits_[0], rank);
           } else {
-            return 1*64 + select0ll(bits_[1], rank - (64*1 - subranks_[1]));
+            return 64*1 + select0ll(bits_[1], rank - (64*1 - subranks_[1]));
           }
         } else {
           if (rank <= 64*3 - subranks_[3]) {
-            return 2*64 + select0ll(bits_[2], rank - (64*2 - subranks_[2]));
+            return 64*2 + select0ll(bits_[2], rank - (64*2 - subranks_[2]));
           } else {
-            return 3*64 + select0ll(bits_[3], rank - (64*3 - subranks_[3]));
+            return 64*3 + select0ll(bits_[3], rank - (64*3 - subranks_[3]));
           }
         }
       }
@@ -67,8 +73,10 @@ struct LoudsCC {
 
     Block *blocks_{nullptr};
 
-    // in blocks where 0 bits are sparse, spills_ contains precomputed select0 results for EVERY possible input
-    uint32_t *spills_{nullptr};
+    // spill list when 0s are sparse, stores precomputed select0 results for EVERY possible input
+    uint32_t *spill0_{nullptr};
+
+    uint32_t spill0_size_{0};
 
     uint32_t capacity_{0};
 
@@ -78,8 +86,6 @@ struct LoudsCC {
 
     uint32_t rank00_{0};
 
-    uint32_t spill_size_{0};
-
     BitVector() = default;
 
     BitVector(uint32_t size) {
@@ -88,7 +94,7 @@ struct LoudsCC {
 
     ~BitVector() {
       free(blocks_);
-      free(spills_);
+      free(spill0_);
     }
 
     auto size() const -> uint32_t {
@@ -145,68 +151,17 @@ struct LoudsCC {
 
     void clear() {
       free(blocks_);
-      free(spills_);
+      free(spill0_);
       blocks_ = nullptr;
-      spills_ = nullptr;
+      spill0_ = nullptr;
     }
 
     auto size_in_bytes() const -> size_t {
-      return sizeof(Block) * (capacity_/256 + 1) + sizeof(uint32_t) * spill_size_ + sizeof(BitVector);
+      return sizeof(Block) * (capacity_/256 + 1) + sizeof(uint32_t) * spill0_size_ + sizeof(BitVector);
     }
 
     auto size_in_bits() const -> size_t {
       return size_in_bytes() * 8;
-    }
-
-    void init_select() {
-      int num_blocks = capacity_ / 256;
-
-      // build select index
-      int i = 0, j = 0;
-      while (i < num_blocks) {
-        while ((j+1)*256 - blocks_[j+1].rank1_ < blocks_[i].rank1_) {
-          j++;
-        }
-        // j is the maximum block index satisfying blocks_[j].rank0_ < blocks_[i].rank1_
-        blocks_[i].select0_ = j;
-        i++;
-      }
-      blocks_[num_blocks].select0_ = capacity_/256;  // sentinel
-    }
-
-    void init_spills() {
-      int num_blocks = capacity_ / 256;
-      int num_spills = 0;
-      for (int i = 0; i < num_blocks; i++) {
-        uint32_t dist = blocks_[i+1].select0_ - blocks_[i].select0_;
-        if (dist >= spill_threshold_) {
-          blocks_[i].select0_ |= BIT(31);
-          // also precompute blocks_[i].rank1_ just in case block starts with 0 bits
-          num_spills += blocks_[i+1].rank1_ - blocks_[i].rank1_ + 1;
-        } else {
-          blocks_[i].select0_ |= (dist << 24); // # bits fits in 32 bits, so # blocks fits in 24 bits
-        }
-      }
-
-      spills_ = reinterpret_cast<uint32_t *>(realloc(spills_, num_spills * sizeof(uint32_t)));
-      spill_size_ = num_spills;
-      int spilled = 0;
-      for (int i = 0; i < num_blocks; i++) {
-        if (!GET_BIT(blocks_[i].select0_, 31)) {
-          continue;
-        }
-        uint32_t block_idx = blocks_[i].select0_ & MASK(31);
-        blocks_[i].select0_ = BIT(31) | spilled;
-
-        uint32_t remainder = blocks_[i].rank1_ - (block_idx*256 - blocks_[block_idx].rank1_);
-        uint32_t pos = block_idx*256 + blocks_[block_idx].select0(remainder);
-        for (uint32_t j = 0; j <= blocks_[i+1].rank1_ - blocks_[i].rank1_; j++) {
-          spills_[spilled++] = pos;
-          pos = next0(pos + 1);
-          assert(spilled <= spill_size_);
-        }
-      }
-      assert(spilled == spill_size_);
     }
 
     void build() {
@@ -237,9 +192,7 @@ struct LoudsCC {
         rank1_ += block_rank1;
 
         blocks_[i].rank00_ = rank00_;
-        rank00_ += rank00ll(blocks_[i].bits_[0], prev) + rank00ll(blocks_[i].bits_[1], blocks_[i].bits_[0] >> 63) +
-                   rank00ll(blocks_[i].bits_[2], blocks_[i].bits_[1] >> 63) +
-                   rank00ll(blocks_[i].bits_[3], blocks_[i].bits_[2] >> 63);
+        rank00_ += blocks_[i].rank00(blocks_[i].bits_[0], prev);
         prev = blocks_[i].bits_[3] >> 63;
       }
       if (size_ < capacity_) {
@@ -248,8 +201,8 @@ struct LoudsCC {
       blocks_[capacity_/256].rank1_ = rank1_;
       blocks_[capacity_/256].rank00_ = rank00_;
 
-      init_select();
-      init_spills();
+      init_select0();
+      init_spill0();
     }
 
     // get the `pos`-th bit
@@ -295,15 +248,17 @@ struct LoudsCC {
       return ret;
     }
 
-    // return select0(rank1(pos+1))
+    // return select0(rank1(pos))
     auto r1s0(uint32_t pos) const -> uint32_t {
       assert(pos < size_);
-      Block &block = blocks_[(pos+1)/256];
-      uint32_t rank = block.rank1_ + block.rank1((pos + 1) % 256);
+      Block &block = blocks_[pos / 256];
+      uint32_t rank = rank1(pos);
       if (GET_BIT(block.select0_, 31)) {
         uint32_t spill_idx = block.select0_ & MASK(31);
-        return spills_[spill_idx + (rank - block.rank1_)];
+        assert(spill_idx + (rank - block.rank1_) < spill0_size_);
+        return spill0_[spill_idx + (rank - block.rank1_)];
       }
+
       int left = block.select0_ & MASK(24), right = left + (block.select0_ >> 24) + 1;
       assert(left*256 - blocks_[left].rank1_ < rank);
       assert(right*256 - blocks_[right].rank1_ >= rank);
@@ -325,7 +280,7 @@ struct LoudsCC {
 
     // used for debugging only
     auto select0(uint32_t rank) const -> uint32_t {
-      assert(rank <= rank1_);
+      assert(rank <= rank0());
 
       int left = 0;
       int right = size_ / 256;
@@ -343,12 +298,64 @@ struct LoudsCC {
         block_idx++;
       }
 
-      assert((rank == 0 || block_idx*256 - blocks_[block_idx].rank1_ < rank) &&
-             (block_idx+1)*256 - blocks_[block_idx+1].rank1_ >= rank);
+      assert((rank == 0 || block_idx*256 - blocks_[block_idx].rank1_ < rank));
+      assert((block_idx+1)*256 - blocks_[block_idx+1].rank1_ >= rank);
 
       auto &block = blocks_[block_idx];
       uint32_t remainder = rank - (block_idx*256 - block.rank1_);
       return block_idx*256 + block.select0(remainder);
+    }
+
+   private:
+    void init_select0() {
+      int num_blocks = capacity_ / 256;
+
+      // build select index
+      int i = 0, j = 0;
+      while (i < num_blocks) {
+        while ((j+1)*256 - blocks_[j+1].rank1_ < blocks_[i].rank1_) {
+          j++;
+        }
+        // j is the maximum block index satisfying blocks_[j].rank0_ < blocks_[i].rank1_
+        blocks_[i].select0_ = j;
+        i++;
+      }
+      blocks_[num_blocks].select0_ = capacity_/256;  // sentinel
+    }
+
+    void init_spill0() {
+      int num_blocks = capacity_ / 256;
+      int num_spills = 0;
+      for (int i = 0; i < num_blocks; i++) {
+        uint32_t dist = blocks_[i+1].select0_ - blocks_[i].select0_;
+        if (dist >= spill_threshold_) {
+          blocks_[i].select0_ |= BIT(31);
+          // also precompute blocks_[i].rank1_ just in case block starts with 0 bits
+          num_spills += blocks_[i+1].rank1_ - blocks_[i].rank1_ + 1;
+        } else {
+          blocks_[i].select0_ |= (dist << 24); // # bits fits in 32 bits, so # blocks fits in 24 bits
+        }
+      }
+
+      spill0_ = reinterpret_cast<uint32_t *>(realloc(spill0_, num_spills * sizeof(uint32_t)));
+      spill0_size_ = num_spills;
+      int spilled = 0;
+      for (int i = 0; i < num_blocks; i++) {
+        if (!GET_BIT(blocks_[i].select0_, 31)) {
+          continue;
+        }
+        uint32_t block_idx = blocks_[i].select0_ & MASK(31);
+        blocks_[i].select0_ = BIT(31) | spilled;
+
+        uint32_t remainder = blocks_[i].rank1_ - (block_idx*256 - blocks_[block_idx].rank1_);
+        uint32_t pos = block_idx*256 + blocks_[block_idx].select0(remainder);
+        for (uint32_t j = 0; j <= blocks_[i+1].rank1_ - blocks_[i].rank1_; j++) {
+          spill0_[spilled++] = pos;
+          pos = next0(pos + 1);
+          assert(spilled <= spill0_size_);
+        }
+      }
+      assert(spilled == spill0_size_);
     }
   };
 
@@ -386,7 +393,7 @@ struct LoudsCC {
     return bv_.rank00(pos);
   }
 
-  auto macro_id(uint32_t pos) const -> uint32_t {
+  auto internal_id(uint32_t pos) const -> uint32_t {
     assert(pos < bv_.size());
     return node_id(pos) - leaf_id(pos);
   }
@@ -399,7 +406,7 @@ struct LoudsCC {
     return bv_.rank00();
   }
 
-  auto num_macros() const -> uint32_t {
+  auto num_internals() const -> uint32_t {
     return num_nodes() - num_leaves();
   }
 
@@ -418,7 +425,7 @@ struct LoudsCC {
 
   auto child_pos(uint32_t pos) const -> uint32_t {
     assert(bv_.get(pos));
-    auto ret = bv_.r1s0(pos) + 1;
+    auto ret = bv_.r1s0(pos + 1) + 1;
     return ret;
   }
 

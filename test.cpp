@@ -8,12 +8,15 @@
 #include <vector>
 #include <chrono>
 #include <random>
+#include <unordered_map>
 
 
 int main(int argc, char *argv[]) {
   assert(argc > 1);
 
-  uint32_t space_relaxation = argc == 3 ? std::atoi(argv[2]) : 0;
+  uint32_t space_relaxation = argc >= 3 ? std::atoi(argv[2]) : 0;
+  uint32_t pattern_len = argc >= 4 ? std::atoi(argv[3]) : 0;
+  uint32_t min_occur = argc >= 5 ? std::atoi(argv[4]) : 0;
 
   std::string filename(argv[1]);
   std::ifstream file(filename);
@@ -29,16 +32,19 @@ int main(int argc, char *argv[]) {
   auto start = std::chrono::high_resolution_clock::now();
   LS4CoCo<std::string> trie;
   trie.build(keys.begin(), keys.end());
+  printf("built uncompacted trie\n");
 
   CoCoOptimizer<std::string> optimizer(&trie);
-  optimizer.optimize(space_relaxation);
-#ifdef __DEBUG_OPTIMIZER__
-  optimizer.print_optimal();
-#endif
+  optimizer.optimize(space_relaxation, pattern_len, min_occur);
+  printf("optimized trie\n");
+// #ifdef __DEBUG_OPTIMIZER__
+//   optimizer.print_optimal();
+// #endif
   // fflush(stdout);
   // exit(0);
 
-  CoCoCC<std::string> coco(optimizer);
+  // CoCoCC<std::string> coco(optimizer);
+  CoCoCC<std::string, true> coco(optimizer);
   auto end = std::chrono::high_resolution_clock::now();
   auto duration = (end - start).count();
   printf("build time: %lf ms\n", (double)duration/1000000);
@@ -57,17 +63,23 @@ int main(int argc, char *argv[]) {
   // exit(0);
 
   std::shuffle(keys.begin(), keys.end(), std::mt19937{2});
-  std::set<uint32_t> key_ids;
+  std::unordered_set<uint32_t> key_ids;
   start = std::chrono::high_resolution_clock::now();
   for (size_t i = 0; i < keys.size(); i += 1000) {
     for (size_t j = i; j < keys.size() && j < i + 1000; j++) {
-      // printf("%ld: get %s", j, keys[j].c_str());
-      volatile auto key_id = coco.lookup(keys[j]);
-      // printf(", id = %d\n", key_id);
-      // assert(key_id != -1);
-      // assert(key_id < keys.size());
-      // assert(key_ids.count(key_id) == 0);
-      // key_ids.insert(key_id);
+      // printf("%ld: get %s\n", j, keys[j].c_str());
+      volatile uint32_t key_id = coco.lookup(keys[j]);
+      uint32_t id = key_id;
+      // printf("id = %d\n", id);
+      assert(id != -1);
+      assert(id < keys.size());
+      assert(key_ids.count(id) == 0);
+      key_ids.insert(id);
+
+      std::string rev = keys[j];
+      std::reverse(rev.begin(), rev.end());
+      auto len = coco.match_rev(rev, 0, id);
+      assert(len == keys[j].size());
     }
   }
   end = std::chrono::high_resolution_clock::now();
