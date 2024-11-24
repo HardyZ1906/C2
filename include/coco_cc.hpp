@@ -120,7 +120,7 @@ class CoCoCC {
       uint32_t depth = state.depth_;
 
       DEBUG(
-        printf("macro node %d: pos = %d, depth = %d, encoding = %d, ptr = %ld, expected cost = %ld, total cost = %ld\n",
+        printf("macro node %d: pos = %d, depth = %d, encoding = %d, ptr = %ld, expected cost = %lf, total cost = %lf\n",
                macro_id - 1, pos, depth, encoding, bv.size(), state.self_enc_cost_, state.enc_cost_);
         uint32_t key_idx = 0;
         if (prefix_key) {
@@ -248,10 +248,10 @@ class CoCoCC {
             return -1;
           }
         }
-        DEBUG(
-          printf("matched unary path, key: %s, pos %d, macro node %d, encoding = %d, depth = %d\n",
-                 key.substr(idx, depth).c_str(), pos, macro_id, encoding, depth);
-        )
+        // DEBUG(
+        //   printf("matched unary path, key: %s, pos %d, macro node %d, encoding = %d, depth = %d\n",
+        //          key.substr(idx, depth).c_str(), pos, macro_id, encoding, depth);
+        // )
         idx += depth;
         pos = topo_.child_pos(pos);
         continue;
@@ -318,10 +318,10 @@ class CoCoCC {
         return -1;
       }
       assert(child_id < degree);
-      DEBUG(
-        printf("key: %s, code = %ld, pos %d, macro node %d, child %d, encoding = %d, depth = %d, degree = %d, prefix key = %d\n",
-               key.substr(idx, depth).c_str(), code, pos + child_id, macro_id, child_id, encoding, depth, degree, prefix_key);
-      )
+      // DEBUG(
+      //   printf("key: %s, code = %ld, pos %d, macro node %d, child %d, encoding = %d, depth = %d, degree = %d, prefix key = %d\n",
+      //          key.substr(idx, depth).c_str(), code, pos + child_id, macro_id, child_id, encoding, depth, degree, prefix_key);
+      // )
       idx += depth;
       pos = topo_.child_pos(pos + child_id);
     }
@@ -355,10 +355,10 @@ class CoCoCC {
             return -1;
           }
         }
-        DEBUG(
-          printf("matched unary path, key: %s, pos %d, macro node %d, encoding = %d, depth = %d\n",
-                 key.substr(idx, depth).c_str(), pos, macro_id, encoding, depth);
-        )
+        // DEBUG(
+        //   printf("matched unary path, key: %s, pos %d, macro node %d, encoding = %d, depth = %d\n",
+        //          key.substr(idx, depth).c_str(), pos, macro_id, encoding, depth);
+        // )
         idx += depth;
         continue;
       }
@@ -408,10 +408,10 @@ class CoCoCC {
          default: assert(false);  // should not be reachable
         }
       }
-      DEBUG(
-        printf("key: %s, code = %ld, pos %d, macro node %d, child %d, encoding = %d, depth = %d, degree = %d, prefix key = %d\n",
-               key.substr(idx, depth).c_str(), code, pos, macro_id, key_id + prefix_key, encoding, depth, degree, prefix_key);
-      )
+      // DEBUG(
+      //   printf("key: %s, code = %ld, pos %d, macro node %d, child %d, encoding = %d, depth = %d, degree = %d, prefix key = %d\n",
+      //          key.substr(idx, depth).c_str(), code, pos, macro_id, key_id + prefix_key, encoding, depth, degree, prefix_key);
+      // )
       // match
       depth = (static_cast<int>(encoding) & 0x4) ? match_code_rev_remap(key, idx, code, remap)
                                                  : match_code_rev(key, idx, code);
@@ -429,7 +429,8 @@ class CoCoCC {
   }
 
   auto size_in_bits() const -> size_t {
-    return topo_.size_in_bits() + sdsl::size_in_bytes(ptrs_)*8 + macros_.size();
+    size_t next_trie_size = next_trie_ == nullptr ? 0 : next_trie_->size_in_bits();
+    return next_trie_size + topo_.size_in_bits() + sdsl::size_in_bytes(ptrs_)*8 + macros_.size();
   }
 
   auto get_num_nodes() const -> std::pair<uint32_t, uint32_t> {
@@ -511,12 +512,13 @@ class CoCoCC {
           continue;
         }
         key_type pattern;
-        pattern.push_back(opt.trie_->get_label(pos));
-        for (uint32_t j = 1; j < s.pattern_len_; j++) {
-          assert(opt.trie_->has_child(pos));
-          pos = opt.trie_->child_pos(pos);
+        for (uint32_t j = 0; j < s.pattern_len_; j++) {
           pattern.push_back(opt.trie_->get_label(pos));
+          if (opt.trie_->has_child(pos)) {
+            pos = opt.trie_->child_pos(pos);
+          }
         }
+        std::reverse(pattern.begin(), pattern.end());
         bv.append_bits(static_cast<uint64_t>(terminator_), label_width);  // insert a terminator to mark link
         auto link = next_trie_->lookup(pattern);
         assert(link != -1);
@@ -564,11 +566,11 @@ class CoCoCC {
           continue;
         }
         key_type pattern;
-        pattern.push_back(opt.trie_->get_label(pos));
-        for (uint32_t j = 1; j < s.pattern_len_; j++) {
-          assert(opt.trie_->has_child(pos));
-          pos = opt.trie_->child_pos(pos);
+        for (uint32_t j = 0; j < s.pattern_len_; j++) {
           pattern.push_back(opt.trie_->get_label(pos));
+          if (opt.trie_->has_child(pos)) {
+            pos = opt.trie_->child_pos(pos);
+          }
         }
         bv.append_bits(static_cast<uint64_t>(terminator_), label_width);  // insert a terminator to mark link
         auto link = next_trie_->lookup(pattern);
@@ -670,7 +672,7 @@ class CoCoCC {
         if (label == terminator_) {  // double trie encoding
           uint32_t link = it.take(link_bits_);
           uint32_t depth = next_trie_->match_rev(key, begin + matched_len, link);
-          if (depth == 0) {
+          if (depth == -1) {
             return -1;
           }
           matched_len += depth;
@@ -707,12 +709,12 @@ class CoCoCC {
         if (label == terminator_) {  // double trie encoding
           uint32_t link = it.take(link_bits_);
           uint32_t depth = next_trie_->match_rev(key, begin + matched_len, link);
-          if (depth == 0) {
+          if (depth == -1) {
             return -1;
           }
           matched_len += depth;
           continue;
-        } else if (!is_legal(key[begin + matched_len, remap]) || label != encode(key[begin + matched_len], remap)) {
+        } else if (!is_legal(key[begin + matched_len], remap) || label != encode(key[begin + matched_len], remap)) {
           return -1;
         } else {
           matched_len++;

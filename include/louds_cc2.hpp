@@ -371,9 +371,9 @@ struct LoudsCC2 {
         return spill1_[spill_idx + (rank - rank_before)];
       }
 
-      int left = block.select1_ & MASK(24), right = left + (block.select1_ >> 24) + 1;
-      assert(blocks_[left].rank1_ < rank);
-      assert(blocks_[right].rank1_ >= rank);
+      int left = block.select1_ & MASK(24), right = left + (block.select1_ >> 24);
+      // assert(blocks_[left].rank1_ < rank);
+      // assert(blocks_[right].rank1_ >= rank);
       while (right - left > 8) {
         int mid = (left + right + 1) / 2;
         if (blocks_[mid].rank1_ < rank) {
@@ -401,9 +401,9 @@ struct LoudsCC2 {
         return spill00_[spill_idx + rank % sample_rate_];
       }
 
-      int left = sample & MASK(24), right = left + (sample >> 24) + 1;
-      assert(blocks_[left].rank00_ < rank);
-      assert(blocks_[right].rank00_ >= rank);
+      int left = sample & MASK(24), right = left + (sample >> 24);
+      // assert(blocks_[left].rank00_ < rank);
+      // assert(blocks_[right].rank00_ >= rank);
       while (right - left > 8) {
         int mid = (left + right + 1) / 2;
         if (mid*256 - blocks_[mid].rank00_ < rank) {

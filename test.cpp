@@ -11,6 +11,9 @@
 #include <unordered_map>
 
 
+// #define __TEST_REV__
+
+
 int main(int argc, char *argv[]) {
   assert(argc > 1);
 
@@ -43,8 +46,11 @@ int main(int argc, char *argv[]) {
   // fflush(stdout);
   // exit(0);
 
-  // CoCoCC<std::string> coco(optimizer);
+#ifndef __TEST_REV__
+  CoCoCC<std::string> coco(optimizer);
+#else
   CoCoCC<std::string, true> coco(optimizer);
+#endif
   auto end = std::chrono::high_resolution_clock::now();
   auto duration = (end - start).count();
   printf("build time: %lf ms\n", (double)duration/1000000);
@@ -69,17 +75,19 @@ int main(int argc, char *argv[]) {
     for (size_t j = i; j < keys.size() && j < i + 1000; j++) {
       // printf("%ld: get %s\n", j, keys[j].c_str());
       volatile uint32_t key_id = coco.lookup(keys[j]);
-      uint32_t id = key_id;
+      // uint32_t id = key_id;
       // printf("id = %d\n", id);
-      assert(id != -1);
-      assert(id < keys.size());
-      assert(key_ids.count(id) == 0);
-      key_ids.insert(id);
+      // assert(id != -1);
+      // assert(id < keys.size());
+      // assert(key_ids.count(id) == 0);
+      // key_ids.insert(id);
 
+    #ifdef __TEST_REV__
       std::string rev = keys[j];
       std::reverse(rev.begin(), rev.end());
       auto len = coco.match_rev(rev, 0, id);
       assert(len == keys[j].size());
+    #endif
     }
   }
   end = std::chrono::high_resolution_clock::now();

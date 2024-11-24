@@ -45,6 +45,7 @@ struct LoudsCC {
       }
 
       auto rank00(uint32_t size, bool prev) const -> uint32_t {
+        assert(size < 256);
         uint32_t ret = 0;
         for (int i = 0; i < size / 64; i++) {  // maybe make branchless?
           ret += rank00ll(bits_[i], prev);
@@ -192,7 +193,7 @@ struct LoudsCC {
         rank1_ += block_rank1;
 
         blocks_[i].rank00_ = rank00_;
-        rank00_ += blocks_[i].rank00(blocks_[i].bits_[0], prev);
+        rank00_ += blocks_[i].rank00(prev);
         prev = blocks_[i].bits_[3] >> 63;
       }
       if (size_ < capacity_) {
