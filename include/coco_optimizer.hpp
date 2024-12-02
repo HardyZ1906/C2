@@ -530,6 +530,7 @@ class CoCoOptimizer {
 
       const state_t &state = states_[trie_->node_id(pos)];
       uint32_t depth = state.depth_;
+
       if (state.encoding_ != encoding_t::UNARY_PATH && state.encoding_ != encoding_t::UP_REMAP) {
         typename trie_t::walker walker(trie_, pos);
         walker.get_min_key(depth);
@@ -547,23 +548,28 @@ class CoCoOptimizer {
         if (s.pattern_len_ == 0) {
           if (trie_->has_child(pos)) {
             pos = trie_->child_pos(pos);
+          } else {
+            pos = -1;
           }
           i++;
           continue;
         }
+
         key_type pattern;
-        pattern.push_back(trie_->get_label(pos));
-        for (uint32_t j = 1; j < s.pattern_len_; j++) {
-          assert(trie_->has_child(pos));
-          pos = trie_->child_pos(pos);
+        for (uint32_t j = 0; j < s.pattern_len_; j++) {
           pattern.push_back(trie_->get_label(pos));
+          if (trie_->has_child(pos)) {
+            pos = trie_->child_pos(pos);
+          } else {
+            pos = -1;
+          }
         }
         // DEBUG( printf("extracted pattern: %s\n", pattern.c_str()); )
         std::reverse(pattern.begin(), pattern.end());
         patterns.insert(std::move(pattern));
         i += s.pattern_len_;
       }
-      if (!state.suffix_path_) {
+      if (pos != -1) {
         queue.push(pos);
       }
     }

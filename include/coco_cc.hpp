@@ -44,7 +44,7 @@ class CoCoCC {
 
   CoCoCC() = default;
 
-  CoCoCC(const optimizer &opt) {
+  CoCoCC(const optimizer &opt) : next_trie_{nullptr} {
     build(opt);
   }
 
@@ -108,7 +108,7 @@ class CoCoCC {
       ptrs_[macro_id++] = bv.size();  // set pointer
 
       uint32_t node_id = opt.trie_->node_id(pos);
-      typename optimizer::state_t state = opt.states_[node_id];
+      const typename optimizer::state_t &state = opt.states_[node_id];
 
       bool prefix_key = false;
       if (opt.trie_->get_label(pos) == terminator_) {  // mark key as null instead of encoding it
@@ -425,6 +425,9 @@ class CoCoCC {
   }
 
   auto encoding_size() const -> size_t {
+    if (next_trie_ != nullptr) {
+      return macros_.size() + next_trie_->encoding_size();
+    }
     return macros_.size();
   }
 
@@ -507,15 +510,20 @@ class CoCoCC {
           bv.append_bits(static_cast<uint64_t>(encode(opt.trie_->get_label(pos))), label_width);
           if (opt.trie_->has_child(pos)) {
             pos = opt.trie_->child_pos(pos);
+          } else {
+            pos = -1;
           }
           i++;
           continue;
         }
+
         key_type pattern;
         for (uint32_t j = 0; j < s.pattern_len_; j++) {
           pattern.push_back(opt.trie_->get_label(pos));
           if (opt.trie_->has_child(pos)) {
             pos = opt.trie_->child_pos(pos);
+          } else {
+            pos = -1;
           }
         }
         std::reverse(pattern.begin(), pattern.end());
@@ -565,6 +573,7 @@ class CoCoCC {
           i++;
           continue;
         }
+
         key_type pattern;
         for (uint32_t j = 0; j < s.pattern_len_; j++) {
           pattern.push_back(opt.trie_->get_label(pos));

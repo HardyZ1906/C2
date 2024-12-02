@@ -20,6 +20,9 @@ int main(int argc, char *argv[]) {
   uint32_t space_relaxation = argc >= 3 ? std::atoi(argv[2]) : 0;
   uint32_t pattern_len = argc >= 4 ? std::atoi(argv[3]) : 0;
   uint32_t min_occur = argc >= 5 ? std::atoi(argv[4]) : 0;
+  uint32_t positive_percent = argc >= 6 ? std::atoi(argv[5]) : 100;
+  positive_percent = std::min(positive_percent, 100u);
+  positive_percent = std::max(positive_percent, 10u);
 
   std::string filename(argv[1]);
   std::ifstream file(filename);
@@ -32,9 +35,14 @@ int main(int argc, char *argv[]) {
   auto new_end = std::unique(keys.begin(), keys.end());
   keys.erase(new_end, keys.end());
 
+  std::shuffle(keys.begin(), keys.end(), std::mt19937{2});
+  size_t query_size = keys.size() * positive_percent / 100;
+  std::sort(keys.begin(), keys.begin() + query_size);
+  printf("processed dataset\n");
+
   auto start = std::chrono::high_resolution_clock::now();
   LS4CoCo<std::string> trie;
-  trie.build(keys.begin(), keys.end());
+  trie.build(keys.begin(), keys.begin() + query_size);
   printf("built uncompacted trie\n");
 
   CoCoOptimizer<std::string> optimizer(&trie);
@@ -70,17 +78,18 @@ int main(int argc, char *argv[]) {
 
   std::shuffle(keys.begin(), keys.end(), std::mt19937{2});
   std::unordered_set<uint32_t> key_ids;
+  printf("test query\n");
   start = std::chrono::high_resolution_clock::now();
   for (size_t i = 0; i < keys.size(); i += 1000) {
     for (size_t j = i; j < keys.size() && j < i + 1000; j++) {
       // printf("%ld: get %s\n", j, keys[j].c_str());
       volatile uint32_t key_id = coco.lookup(keys[j]);
-      // uint32_t id = key_id;
+      uint32_t id = key_id;
       // printf("id = %d\n", id);
-      // assert(id != -1);
-      // assert(id < keys.size());
-      // assert(key_ids.count(id) == 0);
-      // key_ids.insert(id);
+      assert(id != -1);
+      assert(id < keys.size());
+      assert(key_ids.count(id) == 0);
+      key_ids.insert(id);
 
     #ifdef __TEST_REV__
       std::string rev = keys[j];

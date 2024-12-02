@@ -22,6 +22,10 @@ class ArrayCounter {
     std::memset(elts_, 0, sizeof(elt_t)*size_);
   }
 
+  ~ArrayCounter() {
+    delete[] elts_;
+  }
+
   void resize(size_t size) {
     delete[] elts_;
     elts_ = new elt_t[size];

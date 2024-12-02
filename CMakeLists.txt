@@ -21,3 +21,7 @@ add_subdirectory(lib/sdsl-lite)
 
 add_executable(test test.cpp)
 target_link_libraries(test sdsl succinct ${Boost_LIBRARIES})
+
+add_executable(profile test.cpp)
+target_link_libraries(profile sdsl succinct ${Boost_LIBRARIES})
+target_compile_options(profile PRIVATE "-ggdb3")

@@ -419,7 +419,7 @@ class LS4CoCo {
 
       Block &block = blocks_[(pos+1)/256];
       if constexpr (bvnum == 0) {
-        uint32_t rank = block.rank1_ + block.rank1<1>((pos+1)%256) - 1;
+        uint32_t rank = block.rank1_ + block.template rank1<1>((pos+1)%256) - 1;
         assert(rank != static_cast<uint32_t>(-1));
         uint32_t left = block.select0_, right = blocks_[(pos+1)/256 + 1].select0_ + 1;
         assert(rank == 0 || blocks_[left].rank0_ < rank);
@@ -437,7 +437,7 @@ class LS4CoCo {
         }
         return left*256 + blocks_[left].template select1<0>(rank - blocks_[left].rank0_);
       } else {
-        uint32_t rank = block.rank0_ + block.rank1<0>((pos+1)%256) + 1;
+        uint32_t rank = block.rank0_ + block.template rank1<0>((pos+1)%256) + 1;
         uint32_t left = block.select1_, right = blocks_[(pos+1)/256 + 1].select1_ + 1;
         assert(blocks_[left].rank1_ < rank);
         assert(blocks_[right].rank1_ >= rank);
@@ -584,7 +584,7 @@ class LS4CoCo {
             key_.pop_back();
           }
           uint32_t end = trie_->node_end(pos_);
-          uint32_t next = trie_->bv_.next1<0>(pos_ + 1);  // has_child.next1(pos_ + 1)
+          uint32_t next = trie_->bv_.template next1<0>(pos_ + 1);  // has_child.next1(pos_ + 1)
           if (next < end) {  // trace next branch
             pos_ = next;
             key_.push_back(trie_->get_label(pos_));
@@ -616,7 +616,7 @@ class LS4CoCo {
             key_.pop_back();
           }
           uint32_t start = trie_->node_start(pos_);
-          uint32_t prev = trie_->bv_.prev1<0>(pos_ - 1);  // has_child.prev1(pos_)
+          uint32_t prev = trie_->bv_.template prev1<0>(pos_ - 1);  // has_child.prev1(pos_)
           if (prev >= start) {  // trace previous branch
             pos_ = prev;
             key_.push_back(trie_->get_label(pos_));
@@ -691,11 +691,11 @@ class LS4CoCo {
   }
 
   auto node_start(uint32_t pos) const -> uint32_t {
-    return bv_.prev1<1>(pos);
+    return bv_.template prev1<1>(pos);
   }
 
   auto node_end(uint32_t pos) const -> uint32_t {
-    return bv_.next1<1>(pos + 1);
+    return bv_.template next1<1>(pos + 1);
   }
 
   auto node_degree(uint32_t pos) const -> uint32_t {
@@ -704,28 +704,28 @@ class LS4CoCo {
 
   auto node_id(uint32_t pos) const -> uint32_t {
     assert(louds(pos));
-    return bv_.rank1<1>(pos);
+    return bv_.template rank1<1>(pos);
   }
 
   auto value_pos(uint32_t pos) const -> uint32_t {
     assert(!has_child(pos));
-    return bv_.rank0<0>(pos);
+    return bv_.template rank0<0>(pos);
   }
 
   auto child_pos(uint32_t pos) const -> uint32_t {
-    return bv_.rs<1>(pos);
+    return bv_.template rs<1>(pos);
   }
 
   auto parent_pos(uint32_t pos) const -> uint32_t {
-    return bv_.rs<0>(pos);
+    return bv_.template rs<0>(pos);
   }
 
   auto has_child(uint32_t pos) const -> bool {
-    return bv_.get<0>(pos);
+    return bv_.template get<0>(pos);
   }
 
   auto louds(uint32_t pos) const -> bool {
-    return bv_.get<1>(pos);
+    return bv_.template get<1>(pos);
   }
 
   auto get_label(uint32_t pos) const -> uint8_t {
@@ -733,7 +733,7 @@ class LS4CoCo {
   }
 
   auto num_nodes() const -> uint32_t {
-    return bv_.rank1<1>();
+    return bv_.template rank1<1>();
   }
 
   auto depth() const -> uint32_t {
@@ -746,9 +746,9 @@ class LS4CoCo {
     uint32_t num_children = 0;
     ret[0] = 0;
     for (uint32_t i = 1; i <= depth_; i++) {
-      uint32_t pos = node_end(bv_.select1<1>(num_children + 1));  // louds.select1(num_children)
+      uint32_t pos = node_end(bv_.template select1<1>(num_children + 1));  // louds.select1(num_children)
       ret[i] = pos;
-      num_children = bv_.rank1<0>(pos);  // has_child.rank1(pos)
+      num_children = bv_.template rank1<0>(pos);  // has_child.rank1(pos)
     }
     assert(ret[depth_] == bv_.size_);  // sentinel
     return ret;
