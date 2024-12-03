@@ -110,7 +110,7 @@ class StaticVector {
   }
 
   auto size_in_bits() const -> size_t {
-    return size_in_bytes * 8;
+    return size_in_bytes() * 8;
   }
 
   size_t capacity_{0};

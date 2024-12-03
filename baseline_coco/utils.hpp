@@ -101,7 +101,7 @@ const size_t BLOCK_SIZE = 8960;
 static_assert((NUM_BIT_FOR_L + NUM_BIT_POINTER + NUM_BIT_TYPE + 1) % CHAR_BIT == 0); // check if byte-aligned
 
 // To test just 50% queries in the set and 50% not in the set:
-const size_t start_q_perc = 0;
+const size_t start_q_perc = 50;
 const size_t end_q_perc = 100;
 const size_t step_q_perc = 101;
 
@@ -111,7 +111,7 @@ const size_t step_q_perc = 101;
 
 const size_t cache_line_bits = 64 * CHAR_BIT;
 
-ds2i::global_parameters params;
+// ds2i::global_parameters params;
 
 template<uint8_t MIN_L, typename code_type>
 inline size_t bits_first_code(size_t as, uint8_t l_idx) {
@@ -352,16 +352,15 @@ using timer = std::chrono::high_resolution_clock;
 template<typename F, class V>
 size_t query_time(F f, const V &queries) {
     const int TIMES = 3;
-    printf("%ld\n", queries.size());
     auto start = timer::now();
     auto cnt = 0;
     for (auto i = 0; i < TIMES; i++) {
-        for (const auto &q: queries)
+        for (auto &q: queries)
             cnt += f(q);
     }
     auto stop = timer::now();
     [[maybe_unused]] volatile auto tmp = cnt;
-    return ((double)(stop - start).count() / queries.size()) / TIMES;
+    return (std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count() / queries.size()) / TIMES;
 }
 
 
@@ -380,7 +379,8 @@ void get_queries(std::vector<std::string> &dataset, std::vector<std::string> &qu
         );
     }
 
-    std::shuffle(queries.begin(), queries.end(), std::mt19937{2});
+    if (percentage_random > 0)
+        std::shuffle(queries.begin(), queries.end(), std::mt19937{2});
 }
 
 void print_percentage(size_t all, size_t part) {

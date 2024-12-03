@@ -35,7 +35,7 @@ int main(int argc, char *argv[]) {
   auto new_end = std::unique(keys.begin(), keys.end());
   keys.erase(new_end, keys.end());
 
-  std::shuffle(keys.begin(), keys.end(), std::mt19937{2});
+  std::shuffle(keys.begin(), keys.end(), std::mt19937{1});
   size_t query_size = keys.size() * positive_percent / 100;
   std::sort(keys.begin(), keys.begin() + query_size);
   printf("processed dataset\n");

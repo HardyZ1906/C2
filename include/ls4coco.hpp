@@ -284,7 +284,7 @@ class LS4CoCo {
     auto rank0(uint32_t size) const -> uint32_t {
       static_assert(bvnum == 0 || bvnum == 1);
       assert(size <= size_);
-      return size - rank1(size);
+      return size - rank1<bvnum>(size);
     }
 
     // select the `rank`-th 1 bit from bv<bvnum>; used in build phase only
@@ -688,6 +688,31 @@ class LS4CoCo {
     labels_.clear();
     bv_.clear();
     depth_ = 0;
+  }
+
+  auto lookup(const key_type &key) const -> uint32_t {
+    uint16_t len = key.size(), matched_len = 0;
+    uint32_t pos = 0;
+
+    while (matched_len < len) {
+      uint32_t end = node_end(pos);
+      pos = labels_.find(key[matched_len], pos, end);
+      if (pos == end) {  // mismatch
+        return -1;
+      }
+      assert(labels_.at(pos) == key[matched_len]);
+
+      if (!bv_.template get<0>(pos)) {  // branch terminates
+        return value_pos(pos);
+      }
+      pos = child_pos(pos);
+      matched_len++;
+    }
+
+    if (labels_.at(pos) == terminator_) {  // prefix key
+      return value_pos(pos);
+    }
+    return -1;
   }
 
   auto node_start(uint32_t pos) const -> uint32_t {

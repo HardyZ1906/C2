@@ -25,8 +25,7 @@
 
 typedef unsigned __int128 uint128_t;
 
-template<uint8_t MIN_L = 1, typename code_type = uint128_t, uint8_t MAX_L_THRS = MAX_L_THRS,
-         uint8_t space_relaxation = 0>
+template<uint8_t MIN_L = 1, typename code_type = uint128_t, uint8_t MAX_L_THRS = MAX_L_THRS, uint8_t space_relaxation = 0>
 class Trie_lw {
 public:
     struct TrieNode_lw {
@@ -81,19 +80,11 @@ public:
         root = new TrieNode_lw;
     }
 
-    Trie_lw(Trie_lw &&other) : root(other.root), global_number_nodes_CoCo(other.global_number_nodes_CoCo),
-                               filename(other.filename), log_sigma(other.log_sigma), max_l_idx(other.max_l_idx) {
-        other.root = nullptr;
-    }
-
     ~Trie_lw() {
         recursive_delete(root);
     }
 
     void recursive_delete(TrieNode_lw *node) {
-        if (node == nullptr) {
-            return;
-        }
         for (auto child: node->children) {
             recursive_delete(child.second);
         }
@@ -111,21 +102,6 @@ public:
         TrieNode_lw *pCrawl = root;
 
         for (auto i = 0; i < key.length(); i++) {
-            if (pCrawl->children.find(key[i]) == pCrawl->children.end()) {
-                pCrawl->children[key[i]] = new TrieNode_lw();
-            }
-
-            pCrawl = pCrawl->children[key[i]];
-        }
-
-        pCrawl->isEndOfWord = true;
-    }
-
-    // similar to the default insert, but only inserts a substring
-    void insert(const std::string &key, uint32_t start, uint32_t len) {
-        TrieNode_lw *pCrawl = root;
-
-        for (uint32_t i = start; i < start + len; i++) {
             if (pCrawl->children.find(key[i]) == pCrawl->children.end()) {
                 pCrawl->children[key[i]] = new TrieNode_lw();
             }

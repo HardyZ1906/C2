@@ -13,12 +13,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
-#pragma once
-
 
 #include <queue>
 #include "../lib/ds2i/succinct/bp_vector.hpp"
 #include "louds_sux.hpp"
+
 
 #pragma pack(push, 1)
 

@@ -50,13 +50,13 @@ class CoCoCC {
 
   template<typename Iterator>
   CoCoCC(Iterator begin, Iterator end, uint32_t space_relaxation = 0,
-         uint32_t pattern_len = 10, uint32_t min_occur = 20) {
+         uint32_t pattern_len = 0, uint32_t min_occur = 0) : next_trie_{nullptr} {
     build(begin, end, space_relaxation, pattern_len, min_occur);
   }
 
   template<typename Iterator>
   void build(Iterator begin, Iterator end, uint32_t space_relaxation = 0,
-             uint32_t pattern_len = 10, uint32_t min_occur = 20) {
+             uint32_t pattern_len = 0, uint32_t min_occur = 0) {
     if constexpr (reverse_) {
       pattern_len = 0;
       min_occur = 0;
@@ -617,7 +617,7 @@ class CoCoCC {
       }
     }
     code_t val;
-    while ((val = macros_.get_bits(pos + left*width, width)) < target) {
+    while (left <= right && (val = macros_.get_bits(pos + left*width, width)) < target) {
       left++;
     }
     if (val == target) {

@@ -22,15 +22,6 @@
 
 #pragma once
 
-// #define __BENCH_SUX__
-#ifdef __BENCH_SUX__
-# include <chrono>
-# define BENCH_SUX(foo) foo
-#else
-# define BENCH_SUX(foo)
-#endif
-
-
 template<typename rank_support1 = sdsl::rank_support_v<1>,
         typename rank_support00 = sdsl::rank_support_v<0, 2>,
         typename select0_type = sux::bits::SimpleSelectZero<>>
@@ -41,24 +32,6 @@ struct louds_sux {
     rank_support1 rs1;
     rank_support00 rs00;
     select0_type ss0;
-
-#ifdef __BENCH_SUX__
-    static size_t get_time_;
-    static size_t rank_time_;
-    static size_t select_time_;
-
-    static void print_microbenchmark() {
-        printf("get time: %lf ms, rank time: %lf ms, select time: %lf ms\n", (double)get_time_/1000000,
-               (double)rank_time_/1000000, (double)select_time_/1000000);
-    }
-
-    static void clear_microbenchmark() {
-        get_time_ = rank_time_ = select_time_ = 0;
-    }
-#else
-    static void print_microbenchmark() {}
-    static void clear_microbenchmark() {}
-#endif
 
     louds_sux() = default;
 
@@ -112,28 +85,15 @@ struct louds_sux {
     // from position in the bv to node index (0-based)
     size_t node_rank(size_t v) const {
         // it is just rank_0(v-1)
-        BENCH_SUX( auto start = std::chrono::high_resolution_clock::now(); )
-        size_t ret = (v - 1) - rs1.rank(v - 1);
-        BENCH_SUX(
-            auto end = std::chrono::high_resolution_clock::now();
-            rank_time_ += (end - start).count();
-        )
-        return ret;
+        return (v - 1) - rs1.rank(v - 1);
     }
 
     // from index of nodes to position in the bv
     size_t node_select(size_t i) {
-        BENCH_SUX( auto start = std::chrono::high_resolution_clock::now(); )
-        size_t ret;
         if constexpr (std::is_same_v<select0_type, sdsl::select_support_mcl<0>>)
-            ret = ss0.select(i) + 1;
+            return ss0.select(i) + 1;
         else
-            ret = ss0.selectZero(i - 1) + 1;
-        BENCH_SUX(
-            auto end = std::chrono::high_resolution_clock::now();
-            select_time_ += (end - start).count();
-        )
-        return ret;
+            return ss0.selectZero(i - 1) + 1;
     }
 
     size_t size_in_bytes() const {
@@ -166,74 +126,31 @@ struct louds_sux {
     size_t n_th_child_rank(size_t v, size_t n) {
         assert(v < bv.size());
         assert((n - 1) < num_child(v));
-        BENCH_SUX( auto start = std::chrono::high_resolution_clock::now(); )
-        size_t ret = rs1.rank(v - 1 + n);
-        BENCH_SUX(
-            auto end = std::chrono::high_resolution_clock::now();
-            rank_time_ += (end - start).count();
-        )
-        return ret;
+        return rs1.rank(v - 1 + n);
     }
 
     inline bool is_leaf(size_t v) {
         assert(bv[v - 1] == 0);
         assert(v < bv.size());
-        BENCH_SUX( auto start = std::chrono::high_resolution_clock::now(); )
-        bool ret = (bv[v] == 0);
-        BENCH_SUX(
-            auto end = std::chrono::high_resolution_clock::now();
-            get_time_ += (end - start).count();
-        )
-        return ret;
+        return (bv[v] == 0);
     }
 
     // from position in the bv to internal node index
     size_t internal_rank(size_t v, size_t node_rank) {
         assert(v < bv.size());
         assert(node_rank >= rs00.rank(v));
-        BENCH_SUX( auto start = std::chrono::high_resolution_clock::now(); )
-        size_t ret = node_rank - rs00.rank(v);
-        BENCH_SUX(
-            auto end = std::chrono::high_resolution_clock::now();
-            rank_time_ += (end - start).count();
-        )
-        return ret;
+        return node_rank - rs00.rank(v);
     }
 
     // from sux::bits::SimpleSelectZeroHalf::selectZero(const uint64_t rank, uint64_t *const next)
     size_t nextZero(const uint64_t bv_idx) const {
-        BENCH_SUX( auto start = std::chrono::high_resolution_clock::now(); )
-
         uint64_t curr = (bv_idx - 1) / 64;
 
         uint64_t window = ~bv.data()[curr] & -1ULL << (bv_idx - 1);
         window &= window - 1;
 
         while (window == 0) window = ~bv.data()[++curr];
-        size_t ret = curr * 64 + __builtin_ctzll(window);
-
-        BENCH_SUX(
-            auto end = std::chrono::high_resolution_clock::now();
-            get_time_ += (end - start).count();
-        )
-        return ret;
+        return curr * 64 + __builtin_ctzll(window);
     }
 
 };
-
-#ifdef __BENCH_SUX__
-
-#define LOUDS_SUX_TMPL_ARGS template<typename rank_support1, typename rank_support00, typename select0_type>
-#define LOUDS_SUX_TMPL louds_sux<rank_support1, rank_support00, select0_type>
-
-LOUDS_SUX_TMPL_ARGS size_t LOUDS_SUX_TMPL::get_time_ = 0;
-LOUDS_SUX_TMPL_ARGS size_t LOUDS_SUX_TMPL::rank_time_ = 0;
-LOUDS_SUX_TMPL_ARGS size_t LOUDS_SUX_TMPL::select_time_ = 0;
-
-#undef LOUDS_SUX_TMPL_ARGS
-#undef LOUDS_SUX_TMPL
-
-#endif
-
-#undef __BENCH_SUX__
-#undef BENCH_SUX

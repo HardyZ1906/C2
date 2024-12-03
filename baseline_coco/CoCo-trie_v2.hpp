@@ -13,22 +13,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
-#pragma once
-
 
 #include <queue>
 #include "louds_sux.hpp"
 #include "CoCo-trie_v1.hpp"
-
-
-// #define __BENCH_COCOV2__
-#ifdef __BENCH_COCOV2__
-# include <chrono>
-# define BENCH_COCOV2(foo) foo
-#else
-# define BENCH_COCOV2(foo)
-#endif
-
 
 template<uint8_t MIN_L = 1,
         typename code_type = uint128_t,
@@ -53,35 +41,6 @@ public:
     size_t bits_for_L = log_universe((uint64_t) MAX_L_THRS);
 
     size_t log_sigma = log_universe(ALPHABET_SIZE);
-
-#ifdef __BENCH_COCOV2__
-    static size_t node_nav_time_;
-    static size_t key_search_time_;
-    static size_t child_nav_time_;
-    static size_t is_leaf_time_;
-    static size_t internal_rank_time_;
-    static size_t num_child_time_;
-
-    static void print_microbenchmark() {
-        printf("node navigation: %lf ms; key search: %lf ms\n", (double)node_nav_time_/1000000, (double)key_search_time_/1000000);
-        printf("child navigation: %lf ms; is leaf: %lf ms; internal rank: %lf ms; num child: %lf ms\n", (double)child_nav_time_/1000000, 
-               (double)is_leaf_time_/1000000, (double)internal_rank_time_/1000000, (double)num_child_time_/1000000);
-        louds_sux<rank1_type, rank00_type, select0_type>::print_microbenchmark();
-    }
-
-    static void clear_microbenchmark() {
-        node_nav_time_ = key_search_time_ = 0;
-        child_nav_time_ = is_leaf_time_ = internal_rank_time_ = num_child_time_ = 0;
-        louds_sux<rank1_type, rank00_type, select0_type>::clear_microbenchmark();
-    }
-#else
-    static void print_microbenchmark() {
-        louds_sux<rank1_type, rank00_type, select0_type>::print_microbenchmark();
-    }
-    static void clear_microbenchmark() {
-        louds_sux<rank1_type, rank00_type, select0_type>::clear_microbenchmark();
-    }
-#endif
 
     template<typename root_type>
     void build_CoCo_from_uncompacted_trie(root_type root) {
@@ -264,23 +223,13 @@ public:
         std::string_view to_search_view(to_search);
         while (true) {
             assert(!topology->is_leaf(bv_index));
-
-            // printf("%d %d %d %d %d\n", scanned_chars, node_rank, bv_index, internal_rank, n);
-
-            BENCH_COCOV2( auto start = std::chrono::high_resolution_clock::now(); )
-
             succinct::bit_vector::enumerator it(*internal_variable, (*pointers_to_encoding)[internal_rank]);
             size_t l = it.take(bits_for_L);
             auto nt = (node_type) it.take(NUM_BIT_TYPE);
             bool is_end_of_world = it.take(1);
             if (to_search.size() == scanned_chars) {
-                BENCH_COCOV2(
-                    auto end = std::chrono::high_resolution_clock::now();
-                    key_search_time_ += (end - start).count();
-                )
                 return is_end_of_world ? node_rank : -1;
             }
-
             const bool is_remapped = (nt >= elias_fano_amap);
             code_type first_code = 0;
             code_type to_search_code = 0;
@@ -292,10 +241,6 @@ public:
                 alphamap am(alphamap_uint128);
                 // check if all the characters in the wanted string are in the subtrie rooted in the current node
                 if (!am.check_chars(substr)) {
-                    BENCH_COCOV2(
-                        auto end = std::chrono::high_resolution_clock::now();
-                        key_search_time_ += (end - start).count();
-                    )
                     return -1;
                 }
                 size_t bits_first_code_local_as = bits_first_code<MIN_L, code_type>(am.rankmax(), l);
@@ -307,10 +252,6 @@ public:
             }
             assert(first_code != code_type(0));
             if (to_search_code < first_code) {
-                BENCH_COCOV2(
-                    auto end = std::chrono::high_resolution_clock::now();
-                    key_search_time_ += (end - start).count();
-                )
                 return -1;
             }
             assert(to_search_code >= first_code);
@@ -382,50 +323,24 @@ public:
                         assert(0);
                 }
             }
-
-            BENCH_COCOV2(
-                auto end = std::chrono::high_resolution_clock::now();
-                key_search_time_ += (end - start).count();
-            )
-
             if (child_to_continue == -1) {
                 return -1;
             }
-
             scanned_chars += l + MIN_L;
-            BENCH_COCOV2( auto t1 = std::chrono::high_resolution_clock::now(); )
             // number of nodes before  bv_index (initially refers to the root
             node_rank = topology->n_th_child_rank(bv_index, child_to_continue);
             // position in the bv (initially refers to the root)
             bv_index = topology->node_select(node_rank + 1);
-            BENCH_COCOV2( auto t2 = std::chrono::high_resolution_clock::now(); )
             if (topology->is_leaf(bv_index)) {
-                BENCH_COCOV2(
-                    auto t3 = std::chrono::high_resolution_clock::now();
-                    child_nav_time_ += (t2 - t1).count();
-                    is_leaf_time_ += (t3 - t2).count();
-                    node_nav_time_ += (t3 - t1).count();
-                )
                 return (scanned_chars < to_search.size()) ? -1 : node_rank;
             }
-            BENCH_COCOV2( auto t3 = std::chrono::high_resolution_clock::now(); )
             // number of internal nodes before bv_index (initially refers to the root)
             internal_rank = topology->internal_rank(bv_index, node_rank);
-            BENCH_COCOV2( auto t4 = std::chrono::high_resolution_clock::now(); )
             n = topology->num_child(bv_index);
-            BENCH_COCOV2( auto t5 = std::chrono::high_resolution_clock::now(); )
-
-            BENCH_COCOV2(
-                child_nav_time_ += (t2 - t1).count();
-                is_leaf_time_ += (t3 - t2).count();
-                internal_rank_time_ += (t4 - t3).count();
-                num_child_time_ += (t5 - t4).count();
-                node_nav_time_ += (t5 - t1).count();
-            )
         }
     }
 
-    size_t size_in_bits() {
+    size_t size_in_bits() const {
         size_t to_return = 0;
         to_return += topology->size_in_bits();
         to_return += internal_variable->size();
@@ -473,28 +388,3 @@ public:
         internal_variable = std::make_unique<succinct::bit_vector>(&bvb);
     }
 };
-
-
-#ifdef __BENCH_COCOV2__
-
-#define COCO_TMPL_ARGS template<uint8_t MIN_L, typename code_type, uint8_t MAX_L_THRS, uint8_t space_relaxation, \
-    typename rank1_type, typename rank00_type, typename select0_type>
-
-#define COCO_TMPL CoCo_v2<MIN_L, code_type, MAX_L_THRS, space_relaxation, rank1_type, rank00_type, select0_type>
-
-COCO_TMPL_ARGS size_t COCO_TMPL::node_nav_time_ = 0;
-COCO_TMPL_ARGS size_t COCO_TMPL::key_search_time_ = 0;
-COCO_TMPL_ARGS size_t COCO_TMPL::child_nav_time_ = 0;
-COCO_TMPL_ARGS size_t COCO_TMPL::is_leaf_time_ = 0;
-COCO_TMPL_ARGS size_t COCO_TMPL::internal_rank_time_ = 0;
-COCO_TMPL_ARGS size_t COCO_TMPL::num_child_time_ = 0;
-
-#undef COCO_TMPL_ARGS
-#undef COCO_TMPL
-
-#endif
-
-#undef __BENCH_COCOV2__
-#undef BENCH_COCOV2
-#undef __DEBUG__
-#undef DEBUG
