@@ -7,3 +7,15 @@
 [submodule "lib/sux"]
 	path = lib/sux
 	url = https://github.com/vigna/sux
+[submodule "pdt"]
+	path = baseline_pdt/pdt
+	url = https://github.com/ot/path_decomposed_tries
+[submodule "fst"]
+	path = baseline_fst/fst
+	url = https://github.com/kampersanda/fast_succinct_trie
+[submodule "marisa"]
+	path = baseline_marisa/marisa
+	url = https://github.com/s-yata/marisa-trie
+[submodule "coco"]
+	path = baseline_coco/coco
+	url = https://github.com/aboffa/CoCo-trie
