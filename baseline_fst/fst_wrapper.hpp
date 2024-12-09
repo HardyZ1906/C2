@@ -6,6 +6,8 @@
 
 class FstWrapper {  // unified API
  public:
+  using trie_t = fst::Trie;
+
   FstWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0,
              uint32_t pattern_len = 0, uint32_t min_occur = 0) : trie_(keys) {}
 
@@ -17,5 +19,5 @@ class FstWrapper {  // unified API
     return trie_.getMemoryUsage() * 8;
   }
  private:
-  fst::Trie trie_;
+  trie_t trie_;
 };

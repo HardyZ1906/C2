@@ -1,6 +1,7 @@
 #include "include/ls4coco.hpp"
 #include "include/coco_optimizer.hpp"
 #include "include/coco_cc.hpp"
+#include "baseline_pdt/pdt_wrapper.hpp"
 #include "baseline_coco/coco_wrapper.hpp"
 #include "baseline_fst/fst_wrapper.hpp"
 
@@ -13,8 +14,10 @@
 #include <unordered_map>
 
 
-class FstCCWrapper {
+class FstCCWrapper {  // unified API
  public:
+  using trie_t = LS4CoCo<std::string>;
+
   FstCCWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0,
                uint32_t pattern_len = 0, uint32_t min_occur = 0) {
     trie_.build(keys.begin(), keys.end());
@@ -28,11 +31,13 @@ class FstCCWrapper {
     return trie_.size_in_bits();
   }
  private:
-  LS4CoCo<std::string> trie_;
+  trie_t trie_;
 };
 
 class CoCoCCWrapper {  // unified API
  public:
+  using trie_t = CoCoCC<std::string>;
+
   CoCoCCWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0,
                 uint32_t pattern_len = 0, uint32_t min_occur = 0)
                 : trie_(keys.begin(), keys.end(), space_relaxation, pattern_len, min_occur) {}
@@ -45,13 +50,14 @@ class CoCoCCWrapper {  // unified API
     return trie_.size_in_bits();
   }
  private:
-  CoCoCC<std::string> trie_;
+  trie_t trie_;
 };
 
+using trie_t = PdtWrapper;
 // using trie_t = FstWrapper;
 // using trie_t = FstCCWrapper;
 // using trie_t = CoCoWrapper;
-using trie_t = CoCoCCWrapper;
+// using trie_t = CoCoCCWrapper;
 
 
 template<typename trie_t>

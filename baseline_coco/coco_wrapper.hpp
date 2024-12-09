@@ -10,6 +10,8 @@
 
 class CoCoWrapper {  // unified API
  public:
+  using trie_t = CoCo_v2<>;
+
   CoCoWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0,
               uint32_t pattern_len = 0, uint32_t min_occur = 0)
               : trie_([&keys]() {
@@ -27,5 +29,5 @@ class CoCoWrapper {  // unified API
     return trie_.size_in_bits();
   }
  private:
-  CoCo_v2<> trie_;
+  trie_t trie_;
 };
