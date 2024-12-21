@@ -79,15 +79,15 @@ struct Alphabet {
     assert(label < rank_);
     if (label <= subrank_[2]) {
       if (label <= subrank_[1]) {
-        return 0*64 + selectll(bits_[0], label);
+        return 64*0 + selectll(bits_[0], label);
       } else {
-        return 1*64 + selectll(bits_[1], label - subrank_[1]);
+        return 64*1 + selectll(bits_[1], label - subrank_[1]);
       }
     } else {
       if (label <= subrank_[3]) {
-        return 2*64 + selectll(bits_[2], label - subrank_[2]);
+        return 64*2 + selectll(bits_[2], label - subrank_[2]);
       } else {
-        return 3*64 + selectll(bits_[3], label - subrank_[3]);
+        return 64*3 + selectll(bits_[3], label - subrank_[3]);
       }
     }
   }

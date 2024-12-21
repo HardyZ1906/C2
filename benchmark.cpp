@@ -1,9 +1,12 @@
-#include "include/ls4coco.hpp"
+#include "include/fst_cc.hpp"
 #include "include/coco_optimizer.hpp"
 #include "include/coco_cc.hpp"
+#include "include/marisa_cc.hpp"
+#include "include/repair_strpool.hpp"
 #include "baseline_pdt/pdt_wrapper.hpp"
 #include "baseline_coco/coco_wrapper.hpp"
 #include "baseline_fst/fst_wrapper.hpp"
+#include "baseline_marisa/marisa_wrapper.hpp"
 
 #include <iostream>
 #include <string>
@@ -11,12 +14,15 @@
 #include <vector>
 #include <chrono>
 #include <random>
-#include <unordered_map>
+#include <unordered_set>
+
+
+// #define __DEBUG__
 
 
 class FstCCWrapper {  // unified API
  public:
-  using trie_t = LS4CoCo<std::string>;
+  using trie_t = FstCC<std::string>;
 
   FstCCWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0,
                uint32_t pattern_len = 0, uint32_t min_occur = 0) {
@@ -53,32 +59,49 @@ class CoCoCCWrapper {  // unified API
   trie_t trie_;
 };
 
-using trie_t = PdtWrapper;
-// using trie_t = FstWrapper;
-// using trie_t = FstCCWrapper;
-// using trie_t = CoCoWrapper;
-// using trie_t = CoCoCCWrapper;
+class MarisaCCWrapper {  // unified API
+ public:
+  using trie_t = MarisaCC<std::string, RepairStringPool<std::string>>;
 
+  MarisaCCWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0,
+                  uint32_t pattern_len = 0, uint32_t min_occur = 0) {
+    trie_.build(keys.begin(), keys.end(), false, 3);
+  }
 
-template<typename trie_t>
+  auto lookup(const std::string &key) const -> uint32_t {
+    return trie_.lookup(key);
+  }
+
+  auto space_cost() const -> size_t {
+    return trie_.size_in_bits();
+  }
+ private:
+  trie_t trie_;
+};
+
+template <typename trie_t>
 void __attribute__((noinline)) query_trie(const std::vector<std::string> &keys, const trie_t &trie) {
+ #ifdef __DEBUG__
+  std::unordered_set<uint32_t> key_ids;
+ #endif
+  // int counter = 0;
   for (const auto &key : keys) {
+    // printf("lookup %d:%s\n", counter++, key.c_str());
     volatile uint32_t key_id = trie.lookup(key);
+   #ifdef __DEBUG__
+    uint32_t id = key_id;
+    assert(id != -1);
+    assert(id < keys.size());
+    assert(key_ids.count(id) == 0);
+    key_ids.insert(id);
+   #endif
   }
 }
 
-int main(int argc, char *argv[]) {
-  assert(argc > 1);
-
-  uint32_t space_relaxation = argc >= 3 ? std::atoi(argv[2]) : 0;
-  uint32_t pattern_len = argc >= 4 ? std::atoi(argv[3]) : 0;
-  uint32_t min_occur = argc >= 5 ? std::atoi(argv[4]) : 0;
-  uint32_t positive_percent = argc >= 6 ? std::atoi(argv[5]) : 100;
-  positive_percent = std::min(positive_percent, 100u);
-  positive_percent = std::max(positive_percent, 10u);
-
+template <typename trie_t>
+void __attribute__((noinline)) test_trie(const char *filename, uint32_t space_relaxation, uint32_t pattern_len,
+                                         uint32_t min_occur, uint32_t positive_percent) {
   printf("Processing dataset...\n");
-  std::string filename(argv[1]);
   std::ifstream file(filename);
   std::vector<std::string> keys;
   std::string key;
@@ -108,7 +131,6 @@ int main(int argc, char *argv[]) {
   printf("space cost: %lf MB\n", (double)space_cost / mb_bits);
 
   std::shuffle(keys.begin(), keys.end(), std::mt19937{2});
-  std::unordered_set<uint32_t> key_ids;
   printf("Querying trie...\n");
   start = std::chrono::high_resolution_clock::now();
   query_trie<trie_t>(keys, trie);
@@ -118,3 +140,41 @@ int main(int argc, char *argv[]) {
   printf("total time: %lf ms, avg latency: %lf ns\n", (double)duration/1000000, (double)duration/keys.size());
   printf("[PASSED]\n");
 }
+
+int main(int argc, char *argv[]) {
+  assert(argc >= 2);
+
+  int choice = argc >= 3 ? std::atoi(argv[2]) : 0;
+  uint32_t space_relaxation = argc >= 4 ? std::atoi(argv[3]) : 0;
+  uint32_t pattern_len = argc >= 5 ? std::atoi(argv[4]) : 0;
+  uint32_t min_occur = argc >= 6 ? std::atoi(argv[5]) : 0;
+  uint32_t positive_percent = argc >= 7 ? std::atoi(argv[6]) : 100;
+  positive_percent = std::min(positive_percent, 100u);
+  positive_percent = std::max(positive_percent, 10u);
+
+  switch (choice) {
+   case 0:
+    test_trie<FstCCWrapper>(argv[1], space_relaxation, pattern_len, min_occur, positive_percent);
+    break;
+   case 1:
+    test_trie<CoCoCCWrapper>(argv[1], space_relaxation, pattern_len, min_occur, positive_percent);
+    break;
+   case 2:
+    test_trie<MarisaCCWrapper>(argv[1], space_relaxation, pattern_len, min_occur, positive_percent);
+    break;
+   case 3:
+    test_trie<FstWrapper>(argv[1], space_relaxation, pattern_len, min_occur, positive_percent);
+    break;
+   case 4:
+    test_trie<CoCoWrapper>(argv[1], space_relaxation, pattern_len, min_occur, positive_percent);
+    break;
+   case 5:
+    test_trie<MarisaWrapper>(argv[1], space_relaxation, pattern_len, min_occur, positive_percent);
+    break;
+   case 6:
+    test_trie<PdtWrapper>(argv[1], space_relaxation, pattern_len, min_occur, positive_percent);
+    break;
+  }
+}
+
+#undef __DEBUG__

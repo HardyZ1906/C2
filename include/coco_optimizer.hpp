@@ -2,7 +2,7 @@
 
 #include "utils.hpp"
 #include "alphabet.hpp"
-#include "ls4coco.hpp"
+#include "fst_cc.hpp"
 #include "counting_bloom_filter.hpp"
 #include "../lib/ds2i/compact_elias_fano.hpp"
 #include "../lib/ds2i/integer_codes.hpp"
@@ -22,7 +22,7 @@
 #define __ESTIMATE_CODE_LEN__  // estimate or exact compute the length of first code?
 
 
-template<typename Key>
+template <typename Key>
 class CoCoOptimizer {
  public:
   enum class encoding_t {
@@ -45,7 +45,7 @@ class CoCoOptimizer {
 
   using key_type = Key;
   using alphabet_t = Alphabet;
-  using trie_t = LS4CoCo<key_type>;
+  using trie_t = FstCC<key_type>;
   using counter_type = CountingBloomFilter<uint16_t>;
 
   struct state_t {
@@ -975,7 +975,7 @@ class CoCoOptimizer {
   uint32_t min_occur_{0};    // patterns must occur at least this many times to be considered for double trie compression
   uint32_t link_bits_{0};    // an (upper bounding) estimate of # bits consumed by each link pointer
 
-  template<typename C, bool r> friend class CoCoCC;
+  template <typename C, bool r> friend class CoCoCC;
 };
 
 #undef DEBUG

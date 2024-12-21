@@ -14,7 +14,7 @@
 #endif
 
 
-template<typename Value>
+template <typename Value>
 class StaticVector {
  public:
   using value_type = Value;
@@ -39,6 +39,14 @@ class StaticVector {
 
   auto is_empty() const -> bool {
     return size_ == 0;
+  }
+
+  auto operator[](size_t pos) const -> const value_type & {
+    return at(pos);
+  }
+
+  auto operator[](size_t pos) -> value_type & {
+    return at(pos);
   }
 
   auto at(size_t pos) const -> const value_type & {
@@ -103,6 +111,13 @@ class StaticVector {
   void clear() {
     free(values_);
     values_ = nullptr;
+  }
+
+  void shrink_to_fit() {
+    if (capacity_ > size_) {
+      values_ = reinterpret_cast<value_type *>(realloc(values_, sizeof(value_type) * size_));
+      capacity_ = size_;
+    }
   }
 
   auto size_in_bytes() const -> size_t {

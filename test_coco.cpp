@@ -1,4 +1,4 @@
-#include "include/ls4coco.hpp"
+#include "include/fst_cc.hpp"
 #include "include/coco_optimizer.hpp"
 #include "include/coco_cc.hpp"
 
@@ -41,7 +41,7 @@ int main(int argc, char *argv[]) {
   printf("processed dataset\n");
 
   auto start = std::chrono::high_resolution_clock::now();
-  LS4CoCo<std::string> trie;
+  FstCC<std::string> trie;
   trie.build(keys.begin(), keys.begin() + query_size);
   printf("built uncompacted trie\n");
 

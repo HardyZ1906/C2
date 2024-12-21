@@ -1,3 +1,8 @@
+/**
+ * Taken from https://github.com/ot/path_decomposed_tries;
+ * Changed `char_type` to a template argument to support different labels types.
+ */
+
 #pragma once
 
 #include <boost/lambda/lambda.hpp>
@@ -9,9 +14,10 @@
 namespace succinct {
 namespace tries {
 
+    template <typename char_t>
     struct compressed_string_pool {
-        
-        typedef uint16_t char_type;
+
+        using char_type = char_t;
 
         compressed_string_pool() {}
         

@@ -8,13 +8,12 @@
 #include <vector>
 
 
-// #define __DEBUG_LS4COCO__
+// #define __DEBUG_FSTCC__
 
 
 // louds-sparse trie used for building CoCo-trie
-// similar to LoudsSparseCC, except that 1) cutoff is always 0, and 2) supports parent navigation
-template<typename Key>
-class LS4CoCo {
+template <typename Key>
+class FstCC {
  public:
   using key_type = Key;
   using label_vec = StaticVector<uint8_t>;
@@ -34,7 +33,7 @@ class LS4CoCo {
       uint64_t bits0_[4]{0};  // has-child
       uint64_t bits1_[4]{0};  // louds
 
-      template<int bvnum>
+      template <int bvnum>
       auto build_index() -> uint32_t {
         static_assert(bvnum == 0 || bvnum == 1);
 
@@ -54,8 +53,9 @@ class LS4CoCo {
         }
       }
 
-      template<int bvnum>
+      template <int bvnum>
       auto get(uint32_t pos) const -> bool {
+        static_assert(bvnum == 0 || bvnum == 1);
         if constexpr (bvnum == 0) {
           return GET_BIT(bits0_[pos/64], pos % 64);
         } else {
@@ -63,7 +63,7 @@ class LS4CoCo {
         }
       }
 
-      template<int bvnum>
+      template <int bvnum>
       auto rank1(uint32_t size) const -> uint32_t {
         static_assert(bvnum == 0 || bvnum == 1);
         if constexpr (bvnum == 0) {
@@ -73,49 +73,49 @@ class LS4CoCo {
         }
       }
 
-      template<int bvnum>
+      template <int bvnum>
       auto rank0(uint32_t size) const -> uint32_t {
         static_assert(bvnum == 0 || bvnum == 1);
         return size - rank1<bvnum>(size);
       }
 
-      template<int bvnum>
+      template <int bvnum>
       auto select1(uint32_t rank) const -> uint32_t {
         static_assert(bvnum == 0 || bvnum == 1);
         if constexpr (bvnum == 0) {
           assert(rank <= rank1<0>());
           if (rank <= subrank0_[2]) {
             if (rank <= subrank0_[1]) {
-              return 0*64 + selectll(bits0_[0], rank);
+              return 64*0 + selectll(bits0_[0], rank);
             } else {
-              return 1*64 + selectll(bits0_[1], rank - subrank0_[1]);
+              return 64*1 + selectll(bits0_[1], rank - subrank0_[1]);
             }
           } else {
             if (rank <= subrank0_[3]) {
-              return 2*64 + selectll(bits0_[2], rank - subrank0_[2]);
+              return 64*2 + selectll(bits0_[2], rank - subrank0_[2]);
             } else {
-              return 3*64 + selectll(bits0_[3], rank - subrank0_[3]);
+              return 64*3 + selectll(bits0_[3], rank - subrank0_[3]);
             }
           }
         } else {
           assert(rank <= rank1<1>());
           if (rank <= subrank1_[2]) {
             if (rank <= subrank1_[1]) {
-              return 0*64 + selectll(bits1_[0], rank);
+              return 64*0 + selectll(bits1_[0], rank);
             } else {
-              return 1*64 + selectll(bits1_[1], rank - subrank1_[1]);
+              return 64*1 + selectll(bits1_[1], rank - subrank1_[1]);
             }
           } else {
             if (rank <= subrank1_[3]) {
-              return 2*64 + selectll(bits1_[2], rank - subrank1_[2]);
+              return 64*2 + selectll(bits1_[2], rank - subrank1_[2]);
             } else {
-              return 3*64 + selectll(bits1_[3], rank - subrank1_[3]);
+              return 64*3 + selectll(bits1_[3], rank - subrank1_[3]);
             }
           }
         }
       }
 
-      template<int bvnum>
+      template <int bvnum>
       auto rank1() const -> uint32_t {
         static_assert(bvnum == 0 || bvnum == 1);
         if constexpr (bvnum == 0) {
@@ -144,7 +144,7 @@ class LS4CoCo {
       return size_;
     }
 
-    template<int bvnum>
+    template <int bvnum>
     auto rank1() const -> uint32_t {
       static_assert(bvnum == 0 || bvnum == 1);
       return rank_[bvnum];
@@ -234,32 +234,8 @@ class LS4CoCo {
       init_select();
     }
 
-    void init_select() {
-      int num_blocks = capacity_ / 256;
-
-      // build index for bv<0>.select1(bv<1>.rank1(pos) - 1)
-      uint32_t i = 0, j = 0;
-      while (i <= num_blocks) {
-        while (j < num_blocks && blocks_[j+1].rank0_ + 1 < blocks_[i].rank1_) {
-          j++;
-        }
-        blocks_[i].select0_ = j;
-        i++;
-      }
-
-      // build index for bv<1>.select1(bv<0>.rank1(pos) + 1)
-      i = j = 0;
-      while (i <= num_blocks) {
-        while (j < num_blocks && blocks_[j+1].rank1_ < blocks_[i].rank0_ + 1) {
-          j++;
-        }
-        blocks_[i].select1_ = j;
-        i++;
-      }
-    }
-
     // get the `pos`-th bit of bv<bvnum>
-    template<int bvnum>
+    template <int bvnum>
     auto get(uint32_t pos) const -> bool {
       static_assert(bvnum == 0 || bvnum == 1);
       assert(pos < size_);
@@ -267,7 +243,7 @@ class LS4CoCo {
     }
 
     // compute the rank of the first `size` bits of bv<bvnum>
-    template<int bvnum>
+    template <int bvnum>
     auto rank1(uint32_t size) const -> uint32_t {
       static_assert(bvnum == 0 || bvnum == 1);
       assert(size <= size_);
@@ -280,7 +256,7 @@ class LS4CoCo {
       }
     }
 
-    template<int bvnum>
+    template <int bvnum>
     auto rank0(uint32_t size) const -> uint32_t {
       static_assert(bvnum == 0 || bvnum == 1);
       assert(size <= size_);
@@ -288,7 +264,7 @@ class LS4CoCo {
     }
 
     // select the `rank`-th 1 bit from bv<bvnum>; used in build phase only
-    template<int bvnum>
+    template <int bvnum>
     auto select1(uint32_t rank) const -> uint32_t {
       static_assert(bvnum == 0 || bvnum == 1);
       assert(rank <= rank_[bvnum]);
@@ -325,7 +301,7 @@ class LS4CoCo {
 
     // return the position of the closest 1 bit before position `pos` (inclusive)
     // if not found, return 0
-    template<int bvnum>
+    template <int bvnum>
     auto prev1(uint32_t pos) const -> uint32_t {
       static_assert(bvnum == 0 || bvnum == 1);
 
@@ -368,7 +344,7 @@ class LS4CoCo {
 
     // return the position of the closest 1 bit after position `pos` (inclusive)
     // if not found, return `size_`
-    template<int bvnum>
+    template <int bvnum>
     auto next1(uint32_t pos) const -> uint32_t {
       static_assert(bvnum == 0 || bvnum == 1);
 
@@ -412,7 +388,7 @@ class LS4CoCo {
 
     // bvnum == 0: returns bv<0>.select1(bv<1>.rank1(pos + 1) - 1); used for child navigation
     // bvnum == 1: returns bv<1>.select1(bv<0>.rank1(pos + 1) + 1); used for parent navigation
-    template<int bvnum>
+    template <int bvnum>
     auto rs(uint32_t pos) const -> uint32_t {
       static_assert(bvnum == 0 || bvnum == 1);
       assert(pos < size_);
@@ -463,12 +439,37 @@ class LS4CoCo {
     auto size_in_bits() const -> size_t {
       return size_in_bytes() * 8;
     }
+
+   private:
+    void init_select() {
+      int num_blocks = capacity_ / 256;
+
+      // build index for bv<0>.select1(bv<1>.rank1(pos) - 1)
+      uint32_t i = 0, j = 0;
+      while (i <= num_blocks) {
+        while (j < num_blocks && blocks_[j+1].rank0_ + 1 < blocks_[i].rank1_) {
+          j++;
+        }
+        blocks_[i].select0_ = j;
+        i++;
+      }
+
+      // build index for bv<1>.select1(bv<0>.rank1(pos) + 1)
+      i = j = 0;
+      while (i <= num_blocks) {
+        while (j < num_blocks && blocks_[j+1].rank1_ < blocks_[i].rank0_ + 1) {
+          j++;
+        }
+        blocks_[i].select1_ = j;
+        i++;
+      }
+    }
   };
   using bitvec = BitVector;
  public:
   // helper class for walking down the trie and traversing macro-node keys; used by the optimizer
   struct walker {
-    using trie_t = LS4CoCo;
+    using trie_t = FstCC;
 
     key_type key_;
     const trie_t *trie_;
@@ -635,15 +636,15 @@ class LS4CoCo {
     }
   };
  public:
-  LS4CoCo() = default;
+  FstCC() = default;
 
   // keys must be sorted and unique
-  template<typename Iterator>
+  template <typename Iterator>
   void build(Iterator begin, Iterator end) {
     builder_type builder;
     builder.build(begin, end);
     build(builder);
-  #ifdef __DEBUG_LS4COCO__
+  #ifdef __DEBUG_FSTCC__
     auto left_walker = walker(this, 0);
     left_walker.get_min_key();
     uint32_t cnt = 0;
@@ -703,14 +704,14 @@ class LS4CoCo {
       assert(labels_.at(pos) == key[matched_len]);
 
       if (!bv_.template get<0>(pos)) {  // branch terminates
-        return value_pos(pos);
+        return matched_len == len ? leaf_id(pos) : -1;
       }
       pos = child_pos(pos);
       matched_len++;
     }
 
     if (labels_.at(pos) == terminator_) {  // prefix key
-      return value_pos(pos);
+      return leaf_id(pos);
     }
     return -1;
   }
@@ -732,7 +733,7 @@ class LS4CoCo {
     return bv_.template rank1<1>(pos);
   }
 
-  auto value_pos(uint32_t pos) const -> uint32_t {
+  auto leaf_id(uint32_t pos) const -> uint32_t {
     assert(!has_child(pos));
     return bv_.template rank0<0>(pos);
   }

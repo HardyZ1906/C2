@@ -3,7 +3,8 @@
 #include "utils.hpp"
 
 
-struct LoudsCC {
+class LoudsCC {
+ private:
   static constexpr int spill_threshold_ = 128;
   static_assert(spill_threshold_ <= 128);
 
@@ -360,11 +361,10 @@ struct LoudsCC {
     }
   };
 
-  BitVector bv_;
-
+ public:
   LoudsCC() = default;
 
-  LoudsCC(uint32_t size) : bv_(size == 0 ? 0 : (size*2 - 1)) {}
+  LoudsCC(uint32_t size) : bv_(size == 0 ? 0 : (size*2 - 1)), root_degree_(0) {}
 
   ~LoudsCC() = default;
 
@@ -373,6 +373,9 @@ struct LoudsCC {
       bv_.append1();
     }
     bv_.append0();
+    if (root_degree_ == 0) {
+      root_degree_ = degree;
+    }
   }
 
   void build() {
@@ -397,6 +400,11 @@ struct LoudsCC {
   auto internal_id(uint32_t pos) const -> uint32_t {
     assert(pos < bv_.size());
     return node_id(pos) - leaf_id(pos);
+  }
+
+  auto has_parent(uint32_t pos) const -> uint32_t {
+    assert(pos < bv_.size());
+    return pos > root_degree_;
   }
 
   auto num_nodes() const -> uint32_t {
@@ -445,4 +453,8 @@ struct LoudsCC {
   auto size_in_bits() const -> uint32_t {
     return size_in_bytes() * 8;
   }
+
+ private:
+  BitVector bv_;
+  uint32_t root_degree_;
 };

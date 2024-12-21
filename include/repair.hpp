@@ -1,3 +1,9 @@
+/**
+ * Taken from https://github.com/ot/path_decomposed_tries;
+ */
+
+#pragma once
+
 #include <vector>
 #include <algorithm>
 #include <stdint.h>

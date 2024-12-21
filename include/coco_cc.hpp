@@ -4,9 +4,9 @@
 #include "alphabet.hpp"
 #include "louds_cc.hpp"
 #include "louds_cc2.hpp"
-#include "ls4coco.hpp"
+#include "fst_cc.hpp"
 #include "coco_optimizer.hpp"
-#include "ls4coco.hpp"
+#include "fst_cc.hpp"
 
 #include "../lib/ds2i/succinct/bit_vector.hpp"
 #include "../lib/ds2i/succinct/bp_vector.hpp"
@@ -25,7 +25,7 @@
 #endif
 
 
-template<typename Key, bool reverse = false>
+template <typename Key, bool reverse = false>
 class CoCoCC {
  public:
   using key_type = Key;
@@ -48,13 +48,13 @@ class CoCoCC {
     build(opt);
   }
 
-  template<typename Iterator>
+  template <typename Iterator>
   CoCoCC(Iterator begin, Iterator end, uint32_t space_relaxation = 0,
          uint32_t pattern_len = 0, uint32_t min_occur = 0) : next_trie_{nullptr} {
     build(begin, end, space_relaxation, pattern_len, min_occur);
   }
 
-  template<typename Iterator>
+  template <typename Iterator>
   void build(Iterator begin, Iterator end, uint32_t space_relaxation = 0,
              uint32_t pattern_len = 0, uint32_t min_occur = 0) {
     if constexpr (reverse_) {
@@ -334,7 +334,7 @@ class CoCoCC {
     uint32_t pos = topo_.select_leaf(leaf_id);
     uint32_t idx = begin;
 
-    while (pos > 0) {
+    while (topo_.has_parent(pos)) {
       pos = topo_.parent_pos(pos);
       uint32_t macro_id = topo_.internal_id(pos);
       succinct::bit_vector::enumerator it(macros_, ptrs_[macro_id]);
@@ -1027,7 +1027,7 @@ class CoCoCC {
     topo_.finish();
   }
 
-  template<typename K, bool r> friend class CoCoCC;
+  template <typename K, bool r> friend class CoCoCC;
 
   Alphabet alphabet_;
   topo_t topo_;

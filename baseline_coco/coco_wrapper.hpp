@@ -1,3 +1,5 @@
+#pragma once
+
 #define BIG_ALPHABET
 
 #include "utils.hpp"
@@ -18,7 +20,7 @@ class CoCoWrapper {  // unified API
                   datasetStats ds = dataset_stats_from_vector(keys);
                   MIN_CHAR = ds.get_min_char();
                   ALPHABET_SIZE = ds.get_alphabet_size();
-                  return CoCo_v2<>(keys);
+                  return trie_t(keys);
                 }()) {}
 
   auto lookup(const std::string &key) const -> uint32_t {

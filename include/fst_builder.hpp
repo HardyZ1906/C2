@@ -7,7 +7,7 @@
 #include <limits>
 
 
-template<typename Key, int fanout = 256, int cutoff = 0>
+template <typename Key, int fanout = 256, int cutoff = 0>
 class FstBuilder {
  public:
   using key_type = Key;
@@ -20,7 +20,7 @@ class FstBuilder {
   FstBuilder() = default;
 
   // keys must be sorted and unique
-  template<typename Iterator>
+  template <typename Iterator>
   void build(Iterator begin, Iterator end) {
     // initialize an empty root node
     if constexpr (cutoff_ == 0) {
@@ -195,8 +195,5 @@ class FstBuilder {
   std::vector<bv_builder> s_has_child_;
   std::vector<bv_builder> s_louds_;
 
-  template<typename K, int f, int c> friend class FstCC;
-  template<typename K, int f, int c> friend class LoudsDenseCC;
-  template<typename K, int f, int c> friend class LoudsSparseCC;
-  template<typename K> friend class LS4CoCo;
+  template <typename K> friend class FstCC;
 };

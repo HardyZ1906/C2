@@ -5,7 +5,8 @@
 
 // similar to LoudsCC, except that LoudsCC2 supports parent navigation and leaf selection but not child navigation
 // used for matching reversed keys
-struct LoudsCC2 {
+class LoudsCC2 {
+ private:
   static constexpr int spill_threshold_ = 128;
   static constexpr int sample_rate_ = 256;
   static_assert(spill_threshold_ <= 128);
@@ -406,7 +407,7 @@ struct LoudsCC2 {
       // assert(blocks_[right].rank00_ >= rank);
       while (right - left > 8) {
         int mid = (left + right + 1) / 2;
-        if (mid*256 - blocks_[mid].rank00_ < rank) {
+        if (blocks_[mid].rank00_ < rank) {
           left = mid;
         } else {
           right = mid - 1;
@@ -465,8 +466,8 @@ struct LoudsCC2 {
     }
 
     void init_sample00() {
-      int num_blocks = capacity_ / 256;
-      int num_samples = (rank00_ + sample_rate_ - 1) / sample_rate_;
+      uint32_t num_blocks = capacity_ / 256;
+      uint32_t num_samples = (rank00_ + sample_rate_ - 1) / sample_rate_;
 
       sample00_ = reinterpret_cast<uint32_t *>(realloc(sample00_, (num_samples + 1) * sizeof(uint32_t)));
       sample00_[0] = 0;
@@ -482,8 +483,8 @@ struct LoudsCC2 {
     }
 
     void init_sample0() {
-      int num_blocks = capacity_ / 256;
-      int num_samples = (rank0() + sample_rate_ - 1) / sample_rate_;
+      uint32_t num_blocks = capacity_ / 256;
+      uint32_t num_samples = (rank0() + sample_rate_ - 1) / sample_rate_;
 
       sample0_ = reinterpret_cast<uint32_t *>(realloc(sample0_, (num_samples + 1) * sizeof(uint32_t)));
       sample0_[0] = 0;
@@ -538,7 +539,7 @@ struct LoudsCC2 {
       int num_samples = (rank00_ + sample_rate_ - 1) / sample_rate_ + 1;
       int num_spills = 0;
 
-      for (int i = 0; i < num_samples - 1; i++) {
+      for (int i = 0; i < num_samples; i++) {
         uint32_t dist = sample00_[i+1] - sample00_[i];
         if (dist >= spill_threshold_) {
           sample00_[i] |= BIT(31);
@@ -574,11 +575,10 @@ struct LoudsCC2 {
     }
   };
 
-  BitVector bv_;
-
+ public:
   LoudsCC2() = default;
 
-  LoudsCC2(uint32_t size) : bv_(size == 0 ? 0 : (size*2 - 1)) {}
+  LoudsCC2(uint32_t size) : bv_(size == 0 ? 0 : (size*2 - 1)), root_degree_(0) {}
 
   ~LoudsCC2() = default;
 
@@ -587,6 +587,9 @@ struct LoudsCC2 {
       bv_.append1();
     }
     bv_.append0();
+    if (root_degree_ == 0) {
+      root_degree_ = degree;
+    }
   }
 
   void build() {
@@ -615,6 +618,11 @@ struct LoudsCC2 {
   auto internal_id(uint32_t pos) const -> uint32_t {
     assert(pos < bv_.size());
     return node_id(pos) - leaf_id(pos);
+  }
+
+  auto has_parent(uint32_t pos) const -> uint32_t {
+    assert(pos < bv_.size());
+    return pos > root_degree_;
   }
 
   auto num_nodes() const -> uint32_t {
@@ -683,4 +691,8 @@ struct LoudsCC2 {
   auto size_in_bits() const -> uint32_t {
     return size_in_bytes() * 8;
   }
+
+ private:
+  BitVector bv_;
+  uint32_t root_degree_{0};
 };

@@ -9,7 +9,7 @@
 #include <limits>
 
 
-template<typename ElementType>
+template <typename ElementType>
 class ArrayCounter {
  public:
   using elt_t = ElementType;
@@ -52,11 +52,11 @@ class ArrayCounter {
   elt_t *elts_{nullptr};
   size_t size_{0};
 
-  template<typename E, typename C> friend class CountingBloomFilter;
+  template <typename E, typename C> friend class CountingBloomFilter;
 };
 
 
-template<typename ElementType = uint8_t, typename Counter = ArrayCounter<ElementType>>
+template <typename ElementType = uint8_t, typename Counter = ArrayCounter<ElementType>>
 class CountingBloomFilter {
  public:
   using counter_type = Counter;

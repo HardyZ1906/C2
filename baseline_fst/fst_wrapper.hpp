@@ -1,3 +1,5 @@
+#pragma once
+
 #include "fst.hpp"
 
 #include <vector>
