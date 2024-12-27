@@ -9,8 +9,8 @@
 #include <type_traits>
 #include <vector>
 
-// #define __DEBUG__
-#ifdef __DEBUG__
+// #define __DEBUG_MARISA__
+#ifdef __DEBUG_MARISA__
 # define DEBUG(foo) foo
 #else
 # define DEBUG(foo)
@@ -28,11 +28,12 @@ class MarisaCC {
 
   static constexpr bool reverse_ = reverse;
   static constexpr uint8_t terminator_ = 0;
-  static constexpr uint32_t link_cutoff_ = 4;  // unary paths must be at least this long to be considered for recursive compression
+  static constexpr uint32_t link_cutoff_ = 5;  // unary paths must be at least this long to be considered for recursive compression
   static_assert(link_cutoff_ >= 2);
   // stop building the next trie when the total size of unary paths is below this percentage of the original key set size
   static constexpr int size_percentage_cutoff_ = 10;
 
+ private:
   struct Range {
     uint32_t begin_{0};
     uint32_t end_{0};
@@ -65,15 +66,19 @@ class MarisaCC {
     build(key_set, max_recursion, key_set.space_cost(), nullptr);
   }
 
-  auto size_in_bits() const -> size_t {
-    size_t ret = topo_.size_in_bits() + labels_.size_in_bits() + sdsl::size_in_bytes(links_)*8 + sizeof(void *)*2*8;
+  auto size_in_bytes() const -> size_t {
+    size_t ret = topo_.size_in_bytes() + labels_.size_in_bytes() + sdsl::size_in_bytes(links_) + sizeof(void *)*2;
     if (next_trie_ != nullptr) {
-      ret += next_trie_->size_in_bits();
+      ret += next_trie_->size_in_bytes();
     }
     if (dict_ != nullptr) {
-      ret += dict_->size_in_bits();
+      ret += dict_->size_in_bytes();
     }
     return ret;
+  }
+
+  auto size_in_bits() const -> size_t {
+    return size_in_bytes() * 8;
   }
 
   // returns leaf ID (-1 if not found)
@@ -169,7 +174,7 @@ class MarisaCC {
     }
 
     DEBUG( printf("build: %d\n", reverse_); )
-   #ifdef __DEBUG__
+   #ifdef __DEBUG_MARISA__
     if constexpr (reverse_) {
       for (uint32_t i = 0; i < key_set.size(); i++) {
         printf("%s\n", key_set.materialize(i).c_str());
@@ -185,11 +190,10 @@ class MarisaCC {
       DEBUG( printf("range (%d, %d, %d)\n", range.begin_, range.end_, range.depth_); )
       assert(range.begin_ < range.end_);
 
-      uint64_t has_child[4]{0}, is_link[4]{0};    // each range corresponds to a node
+      uint64_t has_child[4]{0}, is_link[4]{0};  // each range corresponds to a node
       uint32_t num_branches = 0;
 
-      // group common fragments
-      uint32_t begin = range.begin_, end = range.begin_;
+      uint32_t begin = range.begin_, end = range.begin_;  // group common fragments
 
       while (end < range.end_ && range.depth_ == key_set[end].length_) {  // skip empty suffixes
         if (links != nullptr) {
@@ -213,25 +217,23 @@ class MarisaCC {
           }
           end++;
         }
-        DEBUG( printf("range (%d, %d, %d): %c\n", begin, end, range.depth_, key_set.get_label(begin, range.depth_)); )
+        DEBUG( printf("horizontal expansion: (%d, %d, %d, %c)\n", begin, end, range.depth_, key_set.get_label(begin, range.depth_)); )
         assert(end > begin);
 
-        uint32_t depth = range.depth_ + 1;
-        while (depth < key_set[begin].length_) {  // vertical expansion
-          bool extend = true;
-          for (uint32_t i = begin + 1; i < end; i++) {
-            assert(depth < key_set[i].length_);
-            if (key_set.get_label(i, depth) != key_set.get_label(begin, depth)) {
-              extend = false;
+        uint32_t depth;
+        if (end == begin + 1) {
+          depth = key_set[begin].length_;
+        } else {
+          depth = range.depth_ + 1;
+          while (depth < key_set[begin].length_) {  // vertical extension
+            if (key_set.get_label(begin, depth) != key_set.get_label(end - 1, depth)) {
               break;
             }
+            depth++;
           }
-          if (!extend) {
-            break;
-          }
-          DEBUG( printf("extend range (%d, %d, %d): %c\n", begin, end, depth, key_set.get_label(begin, depth)); )
-          depth++;
         }
+        DEBUG( printf("vertical extension: (%d, %d, %d, %d)\n", begin, end, range.depth_, depth); )
+
         if (depth - range.depth_ >= link_cutoff_) {  // link
           if constexpr (!reverse_) {
             auto [pos, len] = key_set.substr_range(begin, range.depth_ + 1, depth - range.depth_ - 1);
@@ -295,5 +297,4 @@ class MarisaCC {
 };
 
 
-#undef __DEBUG__
 #undef DEBUG

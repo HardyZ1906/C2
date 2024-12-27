@@ -18,20 +18,25 @@ class LoudsCC {
        * spilled - bits 0-30: spill index (only half the bits are 0, so no overflow)
        */
       uint32_t select0_;
-      uint8_t subranks_[4];  // accumulative rank1 before each uint64_t element
+      uint8_t subrank_[4];  // accumulative rank1 before each uint64_t element
       uint64_t bits_[4];     // 256 actual bits
 
       auto build_index() -> uint32_t {
         uint32_t subrank = 0;
         for (int i = 0; i < 4; i++) {
-          subranks_[i] = subrank;
+          subrank_[i] = subrank;
           subrank += __builtin_popcountll(bits_[i]);
         }
         return subrank;
       }
 
+      auto get(uint32_t pos) const -> bool {
+        assert(pos < 256);
+        return GET_BIT(bits_[pos/64], pos%64);
+      }
+
       auto rank1(uint32_t size) const -> uint32_t {
-        return subranks_[size/64] + __builtin_popcountll(bits_[size/64] & MASK(size%64));
+        return subrank_[size/64] + __builtin_popcountll(bits_[size/64] & MASK(size%64));
       }
 
       auto rank0(uint32_t size) const -> uint32_t {
@@ -57,17 +62,17 @@ class LoudsCC {
       }
 
       auto select0(uint32_t rank) const -> uint32_t {
-        if (rank <= 64*2 - subranks_[2]) {
-          if (rank <= 64*1 - subranks_[1]) {
+        if (rank <= 64*2 - subrank_[2]) {
+          if (rank <= 64*1 - subrank_[1]) {
             return 64*0 + select0ll(bits_[0], rank);
           } else {
-            return 64*1 + select0ll(bits_[1], rank - (64*1 - subranks_[1]));
+            return 64*1 + select0ll(bits_[1], rank - (64*1 - subrank_[1]));
           }
         } else {
-          if (rank <= 64*3 - subranks_[3]) {
-            return 64*2 + select0ll(bits_[2], rank - (64*2 - subranks_[2]));
+          if (rank <= 64*3 - subrank_[3]) {
+            return 64*2 + select0ll(bits_[2], rank - (64*2 - subrank_[2]));
           } else {
-            return 64*3 + select0ll(bits_[3], rank - (64*3 - subranks_[3]));
+            return 64*3 + select0ll(bits_[3], rank - (64*3 - subrank_[3]));
           }
         }
       }
@@ -95,8 +100,7 @@ class LoudsCC {
     }
 
     ~BitVector() {
-      free(blocks_);
-      free(spill0_);
+      clear();
     }
 
     auto size() const -> uint32_t {
@@ -167,14 +171,11 @@ class LoudsCC {
     }
 
     void build() {
-      if (capacity_ - size_ >= 256) {
-        capacity_ = (size_ + 255) / 256 * 256;
-        blocks_ = reinterpret_cast<Block *>(realloc(blocks_, sizeof(Block) * (capacity_/256 + 1)));
-      }
-
       if (blocks_ == nullptr) {
         return;
       }
+
+      shrink_to_fit();
 
       // clear trailing bits
       uint32_t remainder = size_ % 256;
@@ -183,7 +184,7 @@ class LoudsCC {
         blocks_[size_/256].bits_[i] = 0;
       }
       for (uint32_t i = 0; i < 4; i++) {
-        blocks_[capacity_/256].subranks_[i] = 0;
+        blocks_[capacity_/256].subrank_[i] = 0;
       }
 
       rank1_ = rank00_ = 0;
@@ -210,7 +211,7 @@ class LoudsCC {
     // get the `pos`-th bit
     auto get(uint32_t pos) const -> bool {
       assert(pos < size_);
-      bool ret = GET_BIT(blocks_[pos/256].bits_[(pos%256)/64], pos%64);
+      bool ret = blocks_[pos/256].get(pos%256);
       return ret;
     }
 
@@ -360,11 +361,12 @@ class LoudsCC {
       assert(spilled == spill0_size_);
     }
   };
+  using bitvec_t = BitVector;
 
  public:
   LoudsCC() = default;
 
-  LoudsCC(uint32_t size) : bv_(size == 0 ? 0 : (size*2 - 1)), root_degree_(0) {}
+  LoudsCC(uint32_t size) : bv_(size == 0 ? 0 : (size*2 - 1)) {}
 
   ~LoudsCC() = default;
 
@@ -373,9 +375,6 @@ class LoudsCC {
       bv_.append1();
     }
     bv_.append0();
-    if (root_degree_ == 0) {
-      root_degree_ = degree;
-    }
   }
 
   void build() {
@@ -404,7 +403,7 @@ class LoudsCC {
 
   auto has_parent(uint32_t pos) const -> uint32_t {
     assert(pos < bv_.size());
-    return pos > root_degree_;
+    return bv_.rank0(pos) > 0;
   }
 
   auto num_nodes() const -> uint32_t {
@@ -454,7 +453,10 @@ class LoudsCC {
     return size_in_bytes() * 8;
   }
 
+  void clear() {
+    bv_.clear();
+  }
+
  private:
-  BitVector bv_;
-  uint32_t root_degree_;
+  bitvec_t bv_;
 };

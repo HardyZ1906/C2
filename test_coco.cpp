@@ -1,6 +1,8 @@
 #include "include/fst_cc.hpp"
 #include "include/coco_optimizer.hpp"
 #include "include/coco_cc.hpp"
+#include "include/basic_strpool.hpp"
+#include "include/repair_strpool.hpp"
 
 #include <iostream>
 #include <string>
@@ -11,18 +13,13 @@
 #include <unordered_map>
 
 
-// #define __TEST_REV__
+// #define __TEST_UNCOMPACTED__
 
 
 int main(int argc, char *argv[]) {
   assert(argc > 1);
 
   uint32_t space_relaxation = argc >= 3 ? std::atoi(argv[2]) : 0;
-  uint32_t pattern_len = argc >= 4 ? std::atoi(argv[3]) : 0;
-  uint32_t min_occur = argc >= 5 ? std::atoi(argv[4]) : 0;
-  uint32_t positive_percent = argc >= 6 ? std::atoi(argv[5]) : 100;
-  positive_percent = std::min(positive_percent, 100u);
-  positive_percent = std::max(positive_percent, 10u);
 
   std::string filename(argv[1]);
   std::ifstream file(filename);
@@ -34,34 +31,39 @@ int main(int argc, char *argv[]) {
   std::sort(keys.begin(), keys.end());
   auto new_end = std::unique(keys.begin(), keys.end());
   keys.erase(new_end, keys.end());
-
-  std::shuffle(keys.begin(), keys.end(), std::mt19937{1});
-  size_t query_size = keys.size() * positive_percent / 100;
-  std::sort(keys.begin(), keys.begin() + query_size);
+  std::sort(keys.begin(), keys.end());
   printf("processed dataset\n");
 
-  auto start = std::chrono::high_resolution_clock::now();
-  FstCC<std::string> trie;
-  trie.build(keys.begin(), keys.begin() + query_size);
+  FstCC<std::string, BasicStringPool<std::string>> trie;
+  trie.build(keys.begin(), keys.end());
   printf("built uncompacted trie\n");
 
-  CoCoOptimizer<std::string> optimizer(&trie);
-  optimizer.optimize(space_relaxation, pattern_len, min_occur);
-  printf("optimized trie\n");
-// #ifdef __DEBUG_OPTIMIZER__
-//   optimizer.print_optimal();
-// #endif
-  // fflush(stdout);
-  // exit(0);
-
-#ifndef __TEST_REV__
-  CoCoCC<std::string> coco(optimizer);
-#else
-  CoCoCC<std::string, true> coco(optimizer);
+  std::shuffle(keys.begin(), keys.end(), std::mt19937{1});
+  std::shuffle(keys.begin(), keys.end(), std::mt19937{2});
+  std::unordered_set<uint32_t> key_ids;
+#ifdef __TEST_UNCOMPACTED__
+  printf("test uncompacted trie\n");
+  int counter = 0;
+  for (size_t i = 0; i < keys.size(); i++) {
+    printf("get %d: %s\n", counter++, keys[i].c_str());
+    volatile uint32_t key_id = trie.lookup(keys[i]);
+    uint32_t id = key_id;
+    assert(id != -1);
+    assert(id < keys.size());
+    assert(key_ids.count(id) == 0);
+    key_ids.insert(id);
+  }
+  printf("[PASSED]\n");
+  key_ids.clear();
 #endif
-  auto end = std::chrono::high_resolution_clock::now();
-  auto duration = (end - start).count();
-  printf("build time: %lf ms\n", (double)duration/1000000);
+
+  CoCoOptimizer<std::string> optimizer(&trie);
+  optimizer.optimize(space_relaxation);
+  printf("optimized trie\n");
+#ifdef __DEBUG_OPTIMIZER__
+  optimizer.print_optimal();
+#endif
+  CoCoCC<std::string, RepairStringPool<std::string>> coco(optimizer);
 
   constexpr int mb_bits = 1024*1024*8;
   auto [enc_cost, total_cost] = optimizer.get_final_cost();
@@ -76,10 +78,7 @@ int main(int argc, char *argv[]) {
   // fflush(stdout);
   // exit(0);
 
-  std::shuffle(keys.begin(), keys.end(), std::mt19937{2});
-  std::unordered_set<uint32_t> key_ids;
-  printf("test query\n");
-  start = std::chrono::high_resolution_clock::now();
+  printf("test coco\n");
   for (size_t i = 0; i < keys.size(); i += 1000) {
     for (size_t j = i; j < keys.size() && j < i + 1000; j++) {
       // printf("%ld: get %s\n", j, keys[j].c_str());
@@ -90,17 +89,7 @@ int main(int argc, char *argv[]) {
       assert(id < keys.size());
       assert(key_ids.count(id) == 0);
       key_ids.insert(id);
-
-    #ifdef __TEST_REV__
-      std::string rev = keys[j];
-      std::reverse(rev.begin(), rev.end());
-      auto len = coco.match_rev(rev, 0, id);
-      assert(len == keys[j].size());
-    #endif
     }
   }
-  end = std::chrono::high_resolution_clock::now();
-  duration = (end - start).count();
-  printf("total time: %lf ms, avg latency: %lf ns\n", (double)duration/1000000, (double)duration/keys.size());
   printf("[PASSED]\n");
 }

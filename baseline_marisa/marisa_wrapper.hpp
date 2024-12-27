@@ -10,13 +10,12 @@ class MarisaWrapper {  // unified API
  public:
   using trie_t = marisa::Trie;
 
-  MarisaWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0,
-                uint32_t pattern_len = 0, uint32_t min_occur = 0) {
+  MarisaWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0, uint32_t max_recursion = 0) {
     marisa::Keyset keyset;
     for (const auto &key : keys) {
       keyset.push_back(key.c_str());
     }
-    trie_.build(keyset);
+    trie_.build(keyset, max_recursion + 1);
   }
 
   auto lookup(const std::string &key) const -> uint32_t {

@@ -7,6 +7,6 @@
 [submodule "lib/sux"]
 	path = lib/sux
 	url = https://github.com/vigna/sux.git
-[submodule "wyhash"]
-	path = lib/wyhash
-	url = https://github.com/wangyi-fudan/wyhash.git
+[submodule "marisa"]
+	path = baseline_marisa/marisa
+	url = https://github.com/s-yata/marisa-trie.git

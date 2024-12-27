@@ -50,9 +50,11 @@ struct KeySet {
       return ret;
     }
 
-    void append_to(std::vector<uint8_t> &vec) const {
+    void append_to(std::vector<uint8_t> &vec, bool terminator = true) const {
       vec.insert(vec.end(), key_->begin() + offset_, key_->begin() + offset_ + length_);
-      vec.emplace_back(0);
+      if (terminator) {
+        vec.emplace_back(0);
+      }
     }
 
     auto substr_range(uint32_t idx, uint32_t length, bool reverse) const -> std::pair<uint32_t, uint32_t> {

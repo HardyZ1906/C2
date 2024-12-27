@@ -1,6 +1,6 @@
 /**
  * Taken from https://github.com/ot/path_decomposed_tries;
- * Changed `char_type` to a template argument to support different labels types.
+ * Changed `char_type` to a template argument to support different label types.
  */
 
 #pragma once
