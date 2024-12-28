@@ -8,6 +8,7 @@
 #include "baseline_fst/fst_wrapper.hpp"
 #include "baseline_marisa/marisa_wrapper.hpp"
 #include "baseline_art/art_wrapper.hpp"
+#include "baseline_art/cart_wrapper.hpp"
 
 #include <iostream>
 #include <string>
@@ -86,19 +87,22 @@ void __attribute__((noinline)) query_trie(const std::vector<std::string> &keys, 
   for (uint32_t i = 0; i < keys.size(); i++) {
   #ifdef __CORRECTNESS_TEST__
     bool positive = positive_queries.count(keys[i]);
-    // printf("lookup %d: %s %s\n", i, keys[i].c_str(), positive ? "(positive)" : "(negative)");
+    printf("lookup %d: %s %s\n", i, keys[i].c_str(), positive ? "(positive)" : "(negative)");
   #endif
     volatile uint32_t key_id = trie.lookup(keys[i]);
   #ifdef __CORRECTNESS_TEST__
     uint32_t id = key_id;
-    // printf("id = %d\n", id);
+    printf("id = %d\n", id);
     if (positive) {
-      assert(id != -1);
-      assert(id < keys.size());
-      assert(key_ids.count(id) == 0);
-      key_ids.insert(id);
+      EXPECT(id != -1);
+      if constexpr (std::is_same_v<trie_t, FstCCWrapper> || std::is_same_v<trie_t, CoCoCCWrapper> ||
+                    std::is_same_v<trie_t, MarisaCCWrapper>) {  // key IDs must be in range [0, n-1] and unique
+        EXPECT(id < keys.size());
+        EXPECT(key_ids.count(id) == 0);
+        key_ids.insert(id);
+      }
     } else {
-      assert(id == -1);
+      EXPECT(id == -1);
     }
   #endif
   }
@@ -191,5 +195,11 @@ int main(int argc, char *argv[]) {
     printf("[TEST ART]\n");
     test_trie<ArtWrapper>(argv[1], space_relaxation, max_recursion, positive_percentage);
     break;
+   case 8:
+    printf("[TEST CART]\n");
+    test_trie<CArtWrapper>(argv[1], space_relaxation, max_recursion, positive_percentage);
+    break;
+   default:
+    printf("unrecognized index; stopped\n");
   }
 }

@@ -19,9 +19,7 @@ include_directories(include lib/ds2i lib/sux)
 add_subdirectory(lib/ds2i/succinct)
 add_subdirectory(lib/sdsl-lite)
 
-add_executable(test_coco test_coco.cpp)
-target_include_directories(test_coco PRIVATE ${Boost_INCLUDE_DIR})
-target_link_libraries(test_coco sdsl succinct ${Boost_LIBRARIES})
+# add_subdirectory(baseline_art)
 
 add_executable(benchmark benchmark.cpp)
 target_include_directories(benchmark PRIVATE ${Boost_INCLUDE_DIR} baseline_coco baseline_fst)

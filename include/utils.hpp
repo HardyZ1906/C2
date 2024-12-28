@@ -18,12 +18,12 @@
 #define SET_BIT(bits, pos) ((bits) |= BIT(pos))
 #define CLEAR_BIT(bits, pos) ((bits) &= ~BIT(pos))
 
-#define EXPECT(expr1, expr2, op) \
+#define EXPECT(cond) \
 do { \
-  if (!((expr1) op (expr2))) { \
-    printf("assertion failed: %ld, %ld\n", static_cast<uint64_t>(expr1), static_cast<uint64_t>(expr2)); \
+  if (!(cond)) { \
+    printf("%s:%d: assertion failed: %s\n", __FILE__, __LINE__, (#cond)); \
     fflush(stdout); \
-    assert((expr1) op (expr2)); \
+    exit(-1); \
   } \
 } while (0)
 
@@ -482,7 +482,7 @@ class CopyBitsTest {
       size_t len = dist(gen) % (max_num_blocks * 64 - offset + 1);
       // printf("offset: %ld, len: %ld\n", offset, len);
       copy_bits(dst, offset, src, offset, len);
-      EXPECT(compare_bits(dst, offset, src, offset, len), true, ==);
+      EXPECT(compare_bits(dst, offset, src, offset, len));
     }
     printf("[PASSED]\n");
 
@@ -495,7 +495,7 @@ class CopyBitsTest {
       size_t len = dist(gen) % 64;
       // printf("offset: %ld, len: %ld\n", offset, len);
       copy_bits(dst, offset, src, offset, len);
-      EXPECT(compare_bits(dst, offset, src, offset, len), true, ==);
+      EXPECT(compare_bits(dst, offset, src, offset, len));
     }
     printf("[PASSED]\n");
   }
@@ -527,7 +527,7 @@ class CopyBitsTest {
       size_t len = dist(gen) % (max_num_blocks * 64 - offset2 + 1);
       // printf("offset1: %ld, offset2: %ld, len: %ld\n", offset1, offset2, len);
       copy_bits(dst, offset1, src, offset2, len);
-      EXPECT(compare_bits(dst, offset1, src, offset2, len), true, ==);
+      EXPECT(compare_bits(dst, offset1, src, offset2, len));
     }
     printf("[PASSED]\n");
 
@@ -546,7 +546,7 @@ class CopyBitsTest {
       size_t len = dist(gen) % 64;
       // printf("offset1: %ld, offset2: %ld, len: %ld\n", offset1, offset2, len);
       copy_bits(dst, offset1, src, offset2, len);
-      EXPECT(compare_bits(dst, offset1, src, offset2, len), true, ==);
+      EXPECT(compare_bits(dst, offset1, src, offset2, len));
     }
     printf("[PASSED]\n");
   }
@@ -582,7 +582,7 @@ class CopyBitsTest {
         print_bits(dst, offset1, len);
         print_bits(src, offset2, len);
       }
-      EXPECT(compare_bits(dst, offset1, src, offset2, len), true, ==);
+      EXPECT(compare_bits(dst, offset1, src, offset2, len));
     }
     printf("[PASSED]\n");
 
@@ -601,7 +601,7 @@ class CopyBitsTest {
       size_t len = dist(gen) % 64;
       // printf("offset1: %ld, offset2: %ld, len: %ld\n", offset1, offset2, len);
       copy_bits(dst, offset1, src, offset2, len);
-      EXPECT(compare_bits(dst, offset1, src, offset2, len), true, ==);
+      EXPECT(compare_bits(dst, offset1, src, offset2, len));
     }
     printf("[PASSED]\n");
   }
@@ -629,7 +629,7 @@ class CopyBitsTest {
       size_t len = dist(gen) % ((max_num_blocks - 1) * 64 + offset + 1);
       // printf("offset: %ld, len: %ld\n", offset, len);
       copy_bits_backward(dst, (max_num_blocks - 1) * 64 + offset, src, (max_num_blocks - 1) * 64 + offset, len);
-      EXPECT(compare_bits(dst, (max_num_blocks - 1) * 64 + offset - len, src, (max_num_blocks - 1) * 64 + offset - len, len), true, ==);
+      EXPECT(compare_bits(dst, (max_num_blocks - 1) * 64 + offset - len, src, (max_num_blocks - 1) * 64 + offset - len, len));
     }
     printf("[PASSED]\n");
 
@@ -642,7 +642,7 @@ class CopyBitsTest {
       size_t len = dist(gen) % 64;
       // printf("offset: %ld, len: %ld\n", offset, len);
       copy_bits_backward(dst, (max_num_blocks - 1) * 64 + offset, src, (max_num_blocks - 1) * 64 + offset, len);
-      EXPECT(compare_bits(dst, (max_num_blocks - 1) * 64 + offset - len, src, (max_num_blocks - 1) * 64 + offset - len, len), true, ==);
+      EXPECT(compare_bits(dst, (max_num_blocks - 1) * 64 + offset - len, src, (max_num_blocks - 1) * 64 + offset - len, len));
     }
     printf("[PASSED]\n");
   }
@@ -674,7 +674,7 @@ class CopyBitsTest {
       size_t len = dist(gen) % ((max_num_blocks - 1) * 64 + offset1 + 1);
       // printf("offset1: %ld, offset2: %ld, len: %ld\n", offset1, offset2, len);
       copy_bits_backward(dst, (max_num_blocks - 1) * 64 + offset1, src, (max_num_blocks - 1) * 64 + offset2, len);
-      EXPECT(compare_bits(dst, (max_num_blocks - 1) * 64 + offset1 - len, src, (max_num_blocks - 1) * 64 + offset2 - len, len), true, ==);
+      EXPECT(compare_bits(dst, (max_num_blocks - 1) * 64 + offset1 - len, src, (max_num_blocks - 1) * 64 + offset2 - len, len));
     }
     printf("[PASSED]\n");
 
@@ -693,7 +693,7 @@ class CopyBitsTest {
       size_t len = dist(gen) % 64;
       // printf("offset1: %ld, offset2: %ld, len: %ld\n", offset1, offset2, len);
       copy_bits_backward(dst, (max_num_blocks - 1) * 64 + offset1, src, (max_num_blocks - 1) * 64 + offset2, len);
-      EXPECT(compare_bits(dst, (max_num_blocks - 1) * 64 + offset1 - len, src, (max_num_blocks - 1) * 64 + offset2 - len, len), true, ==);
+      EXPECT(compare_bits(dst, (max_num_blocks - 1) * 64 + offset1 - len, src, (max_num_blocks - 1) * 64 + offset2 - len, len));
     }
     printf("[PASSED]\n");
   }
@@ -725,7 +725,7 @@ class CopyBitsTest {
       size_t len = dist(gen) % ((max_num_blocks - 1) * 64 + offset2 + 1);
       // printf("offset1: %ld, offset2: %ld, len: %ld\n", offset1, offset2, len);
       copy_bits_backward(dst, (max_num_blocks - 1) * 64 + offset1, src, (max_num_blocks - 1) * 64 + offset2, len);
-      EXPECT(compare_bits(dst, (max_num_blocks - 1) * 64 + offset1 - len, src, (max_num_blocks - 1) * 64 + offset2 - len, len), true, ==);
+      EXPECT(compare_bits(dst, (max_num_blocks - 1) * 64 + offset1 - len, src, (max_num_blocks - 1) * 64 + offset2 - len, len));
     }
     printf("[PASSED]\n");
 
@@ -744,7 +744,7 @@ class CopyBitsTest {
       size_t len = dist(gen) % 64;
       // printf("offset1: %ld, offset2: %ld, len: %ld\n", offset1, offset2, len);
       copy_bits_backward(dst, (max_num_blocks - 1) * 64 + offset1, src, (max_num_blocks - 1) * 64 + offset2, len);
-      EXPECT(compare_bits(dst, (max_num_blocks - 1) * 64 + offset1 - len, src, (max_num_blocks - 1) * 64 + offset2 - len, len), true, ==);
+      EXPECT(compare_bits(dst, (max_num_blocks - 1) * 64 + offset1 - len, src, (max_num_blocks - 1) * 64 + offset2 - len, len));
     }
     printf("[PASSED]\n");
   }

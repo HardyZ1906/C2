@@ -7,11 +7,11 @@
 
 
 // Did not pass our correctness test because of inappropriate handling of prefix keys
-class ArtWrapper {  // unified API
+class CArtWrapper {  // unified API
  public:
-  using trie_t = ART;
+  using trie_t = CART;
 
-  ArtWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0, uint32_t max_recursion = 0) {
+  CArtWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0, uint32_t max_recursion = 0) {
     max_key_len_ = 0;
     size_t total_size = 0;
     for (const auto &key : keys) {
@@ -19,7 +19,7 @@ class ArtWrapper {  // unified API
       total_size += key.size();
     }
     total_size += max_key_len_ - keys.back().size();  // make sure the last key does not overflow
-    trie_ = new ART(max_key_len_);
+    trie_ = new CART(max_key_len_);
     db_ = new char[total_size];
 
     std::vector<uint64_t> values;
@@ -33,20 +33,21 @@ class ArtWrapper {  // unified API
     }
     assert(padded_size <= total_size);
     trie_->load(const_cast<std::vector<std::string> &>(keys), values, max_key_len_);
+    trie_->convert();
   }
 
-  ~ArtWrapper() {
+  ~CArtWrapper() {
     delete trie_;
     delete[] db_;
   }
 
   auto lookup(const std::string &key) const -> uint32_t {
-    uint32_t ret = const_cast<trie_t *>(trie_)->lookup(reinterpret_cast<uint8_t *>(const_cast<char *>(key.c_str())),
-                                                       key.size(), max_key_len_);
+    uint32_t ret = const_cast<trie_t *>(trie_)->lookup(reinterpret_cast<uint8_t *>(const_cast<char*>(key.c_str())),
+                                                       static_cast<uint32_t>(key.size()), max_key_len_);
     return ret == 0 ? -1 : ret;
   }
 
-  auto space_cost() const -> size_t {  // only the filter size
+  auto space_cost() const -> size_t {
     return const_cast<trie_t *>(trie_)->getMemory() * 8;
   }
  private:
