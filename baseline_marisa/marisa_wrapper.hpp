@@ -1,6 +1,6 @@
 #pragma once
 
-#include <marisa.h>
+#include "include/marisa.h"
 
 #include <string>
 #include <vector>

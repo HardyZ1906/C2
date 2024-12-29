@@ -1,6 +1,6 @@
 #pragma once
 
-#include "fst/fst.hpp"
+#include "include/fst.hpp"
 
 #include <vector>
 #include <string>

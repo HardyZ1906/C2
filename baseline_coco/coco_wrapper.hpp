@@ -2,9 +2,9 @@
 
 #define BIG_ALPHABET
 
-#include "coco/utils.hpp"
-#include "coco/uncompacted_trie.hpp"
-#include "coco/CoCo-trie_v2.hpp"
+#include "include/utils.hpp"
+#include "include/uncompacted_trie.hpp"
+#include "include/CoCo-trie_v2.hpp"
 
 #include <vector>
 #include <string>
