@@ -4,9 +4,9 @@
 #include <boost/make_shared.hpp>
 #include <boost/static_assert.hpp>
 
-#include "../lib/ds2i/succinct/bp_vector.hpp"
-#include "../lib/ds2i/succinct/elias_fano.hpp"
-#include "../lib/ds2i/succinct/forward_enumerator.hpp"
+#include "../../lib/ds2i/succinct/bp_vector.hpp"
+#include "../../lib/ds2i/succinct/elias_fano.hpp"
+#include "../../lib/ds2i/succinct/forward_enumerator.hpp"
 
 #include "compacted_trie_builder.hpp"
 

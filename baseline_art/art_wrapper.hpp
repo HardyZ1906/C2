@@ -11,7 +11,8 @@ class ArtWrapper {  // unified API
  public:
   using trie_t = ART;
 
-  ArtWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0, uint32_t max_recursion = 0) {
+  ArtWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0,
+             int max_recursion = 0, int mask = 0) {
     max_key_len_ = 0;
     size_t total_size = 0;
     for (const auto &key : keys) {

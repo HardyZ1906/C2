@@ -3,7 +3,7 @@
 #include "utils.hpp"
 #include "alphabet.hpp"
 #include "fst_cc.hpp"
-#include "basic_strpool.hpp"
+#include "strpool.hpp"
 #include "../lib/ds2i/compact_elias_fano.hpp"
 #include "../lib/ds2i/integer_codes.hpp"
 
@@ -33,7 +33,6 @@ class CoCoOptimizer {
   static constexpr uint32_t encoding_bits_ = log2_ceil(static_cast<uint32_t>(encoding_t::COUNT));
   static constexpr uint32_t max_depth_ = 32;  // max # of collapsed levels
   static constexpr uint8_t depth_bits_ = log2_ceil(max_depth_);
-  static constexpr uint8_t terminator_ = 0;
   static constexpr uint32_t bv_block_sz_ = 1024;
   static constexpr uint32_t degree_threshold_ = 1 << 12;
   // depth must be below this value for elias-fano to be considered, following original design
@@ -44,7 +43,7 @@ class CoCoOptimizer {
 
   using key_type = Key;
   using alphabet_t = Alphabet;
-  using trie_t = FstCC<key_type, BasicStringPool<key_type>>;
+  using trie_t = FstCC<key_type>;
 
   struct state_t {
     alphabet_t remap_{};  // local alphabet of optimal macro node
@@ -509,7 +508,7 @@ class CoCoOptimizer {
 
   uint32_t space_relaxation_{0};
 
-  template <typename K, typename C> friend class CoCoCC;
+  template <typename K> friend class CoCoCC;
 };
 
 #undef DEBUG

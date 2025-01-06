@@ -5,7 +5,7 @@
 
 #include <boost/range.hpp>
 
-#include "../lib/ds2i/succinct/util.hpp"
+#include "../../lib/ds2i/succinct/util.hpp"
 #include "bit_strings.hpp"
 
 namespace succinct {

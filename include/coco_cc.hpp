@@ -1,9 +1,11 @@
 #pragma once
 
 #include "utils.hpp"
+#include "key_set.hpp"
 #include "alphabet.hpp"
 #include "louds_cc.hpp"
 #include "fst_cc.hpp"
+#include "marisa_cc.hpp"
 #include "coco_optimizer.hpp"
 #include "bit_vector.hpp"
 
@@ -24,11 +26,11 @@
 #endif
 
 
-template <typename Key, typename Container>
+template <typename Key>
 class CoCoCC {
  public:
   using key_type = Key;
-  using container_t = Container;
+  using strpool_t = StringPool<key_type>;
   using optimizer_t = CoCoOptimizer<key_type>;
   using encoding_t = optimizer_t::encoding_t;
   using topo_t = LoudsCC;
@@ -39,37 +41,53 @@ class CoCoCC {
   static constexpr uint8_t depth_bits_ = optimizer_t::depth_bits_;
   static constexpr uint32_t degree_threshold_ = optimizer_t::degree_threshold_;
   static constexpr uint32_t bv_block_sz_ = optimizer_t::bv_block_sz_;
-  static constexpr uint8_t terminator_ = optimizer_t::terminator_;
 
   CoCoCC() = default;
 
-  CoCoCC(optimizer_t &opt) {
-    build(opt);
+  CoCoCC(optimizer_t &opt, size_t original_size, int max_recursion = 0, int mask = 0) {
+    build(opt, original_size, max_recursion, mask);
   }
 
   template <typename Iterator>
-  CoCoCC(Iterator begin, Iterator end, uint32_t space_relaxation = 0) {
-    build(begin, end);
+  CoCoCC(Iterator begin, Iterator end, bool sorted = false,
+         uint32_t space_relaxation = 0, int max_recursion = 0, int mask = 0) {
+    build(begin, end, sorted, space_relaxation, max_recursion, mask);
+  }
+
+  ~CoCoCC() {
+    delete next_;
   }
 
   template <typename Iterator>
-  void build(Iterator begin, Iterator end, uint32_t space_relaxation = 0) {
+  void build(Iterator begin, Iterator end, bool sorted = false,
+             uint32_t space_relaxation = 0, int max_recursion = 0, int mask = 0) {
+    KeySet<key_type> key_set;
+    while (begin != end) {
+      key_set.emplace_back(&(*begin));
+      ++begin;
+    }
+    if (!sorted) {
+      key_set.sort();
+    }
+
     typename optimizer_t::trie_t trie;
-    trie.build(begin, end);
+    trie.build(key_set, true, max_recursion, mask);
     optimizer_t opt(&trie);
     opt.optimize(space_relaxation);
-    build(opt);
+    build(opt, key_set.space_cost(), max_recursion);
   }
 
-  void build(optimizer_t &opt) {
+  void build(optimizer_t &opt, size_t original_size, int max_recursion = 0, int mask = 0) {
     alphabet_ = opt.alphabet_;
     topo_.reserve(opt.states_[0].num_macros_ + opt.states_[0].num_leaves_);
     ptrs_.resize(opt.states_[0].num_macros_ + 1);
 
     succinct::bit_vector_builder bv;
 
+    auto &old_suffixes = reinterpret_cast<optimizer_t::trie_t::TempStringPool *>(opt.trie_->next_)->keys_;
+
     std::queue<std::pair<uint32_t, uint32_t>> queue;
-    std::vector<uint8_t> suffix_builder;
+    KeySet<key_type> suffixes;
     auto push_to_queue = [&](uint32_t x, uint32_t y) {
       queue.push(std::make_pair(x, y));
     };
@@ -95,8 +113,8 @@ class CoCoCC {
         // DEBUG( printf("leaf node\n"); )
         topo_.add_node(0);
         if (link_id != -1) {
-          DEBUG( printf("link leaf node, %d: %s\n", link_id, opt.trie_->dict_.get(link_id).c_str()); )
-          opt.trie_->dict_.append_to(suffix_builder, link_id);
+          DEBUG( printf("link leaf node, %d: %s\n", link_id, old_suffixes[link_id].materialize().c_str()); )
+          suffixes.push_back(old_suffixes[link_id]);
           is_link_.append1();
         } else {
           DEBUG( printf("regular leaf node\n"); )
@@ -193,7 +211,7 @@ class CoCoCC {
     DEBUG( printf("final encoding cost: %ld\n", bv.size()); )
     topo_.build();
     is_link_.build();
-    dict_.build(suffix_builder);
+    next_ = strpool_t::build_optimal(suffixes, original_size, max_recursion, mask);
     sdsl::util::bit_compress(ptrs_);
     new (&macros_) succinct::bit_vector(&bv);
   }
@@ -302,7 +320,7 @@ class CoCoCC {
           return -1;
         }
         if (is_link_.get(leaf_id) &&
-            dict_.match(key, matched_len, is_link_.rank1(leaf_id)) != key.size() - matched_len) {  // suffix mismatch          
+            next_->match(key, matched_len, is_link_.rank1(leaf_id)) != key.size() - matched_len) {  // suffix mismatch          
           return -1;
         }
         return leaf_id;
@@ -315,7 +333,7 @@ class CoCoCC {
   }
 
   auto size_in_bits() const -> size_t {
-    return topo_.size_in_bits() + sdsl::size_in_bytes(ptrs_)*8 + macros_.size() + dict_.size_in_bits();
+    return topo_.size_in_bits() + sdsl::size_in_bytes(ptrs_)*8 + macros_.size() + next_->size_in_bits();
   }
 
   auto get_num_nodes() const -> std::pair<uint32_t, uint32_t> {
@@ -613,7 +631,7 @@ class CoCoCC {
   bitvec_t is_link_;
   sdsl::int_vector<> ptrs_;
   succinct::bit_vector macros_;  // macro node encoding
-  container_t dict_;
+  strpool_t *next_{nullptr};
   uint32_t link_bits_{0};  // #bits consumed by each link pointer
 };
 

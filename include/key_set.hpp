@@ -8,12 +8,22 @@ struct KeySet {
   using key_type = Key;
 
   struct Fragment {
-    const key_type *key_;
-    uint32_t offset_;
-    uint32_t length_;
-    uint32_t id_;
+    const key_type *key_{nullptr};
+    uint32_t offset_{0};
+    uint32_t length_{0};
+    uint32_t id_{0};
 
     Fragment() = default;
+
+    ~Fragment() = default;
+
+    Fragment(const Fragment &other) = default;
+
+    Fragment(Fragment &&other) = default;
+
+    auto operator=(const Fragment &other) -> Fragment & = default;
+
+    auto operator=(Fragment &&other) -> Fragment & = default;
 
     Fragment(const key_type *key, uint32_t offset, uint32_t length, uint32_t id)
         : key_(key), offset_(offset), length_(length), id_(id) {}
@@ -50,10 +60,11 @@ struct KeySet {
       return ret;
     }
 
-    void append_to(std::vector<uint8_t> &vec, bool terminator = true) const {
-      vec.insert(vec.end(), key_->begin() + offset_, key_->begin() + offset_ + length_);
+    template <typename T>
+    void append_to(T &t, bool terminator = true) const {
+      t.insert(t.end(), key_->begin() + offset_, key_->begin() + offset_ + length_);
       if (terminator) {
-        vec.emplace_back(0);
+        t.push_back(terminator_);
       }
     }
 
@@ -73,6 +84,14 @@ struct KeySet {
 
   KeySet() = default;
 
+  KeySet(const KeySet &other) = default;
+
+  KeySet(KeySet &&other) = default;
+
+  auto operator=(const KeySet &other) -> KeySet & = default;
+
+  auto operator=(KeySet &&other) -> KeySet & = default;
+
   KeySet(bool reverse) : reverse_(reverse) {}
 
   void emplace_back(const key_type *key) {
@@ -84,6 +103,11 @@ struct KeySet {
     assert(offset + length <= key->size());
     fragments_.emplace_back(key, offset, length, fragments_.size());
     space_cost_ += length;
+  }
+
+  void push_back(const Fragment &frag) {
+    fragments_.push_back(frag);
+    space_cost_ += frag.length_;
   }
 
   auto operator[](int idx) const -> const Fragment & {
@@ -135,6 +159,30 @@ struct KeySet {
               [&](const Fragment &f1, const Fragment &f2) -> bool {
                 return f1.lt(f2, reverse_);
               });
+  }
+
+  // must be sorted; returns {total size of lcp, size after sorting and deduplication}
+  auto lcp_size() const -> std::pair<size_t, size_t> {
+    size_t total_lcp = 0, sorted_size = 0;
+
+    const Fragment *next = nullptr;
+    for (size_t i = fragments_.size(); i > 0; i--) {
+      const KeySet<key_type>::Fragment &cur = fragments_[i - 1];
+      if (next != nullptr) {
+        uint32_t len = std::min(cur.size(), next->size());
+        uint32_t match = 0;
+        while (match < len && cur.get_label(match, reverse_) == next->get_label(match, reverse_)) {
+          match++;
+        }
+        total_lcp += match;
+        if (match == cur.size()) {
+          continue;
+        }
+      }
+      sorted_size += cur.size() + 1;  // key + terminator
+      next = &cur;
+    }
+    return std::make_pair(total_lcp, sorted_size);
   }
 
   void reverse() {

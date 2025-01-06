@@ -14,7 +14,8 @@ class CoCoWrapper {  // unified API
  public:
   using trie_t = CoCo_v2<>;
 
-  CoCoWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0, uint32_t max_recursion = 0)
+  CoCoWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0,
+              int max_recursion = 0, int mask = 0)
               : trie_([&keys]() {
                   datasetStats ds = dataset_stats_from_vector(keys);
                   MIN_CHAR = ds.get_min_char();

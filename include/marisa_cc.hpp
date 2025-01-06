@@ -1,5 +1,6 @@
 #pragma once
 
+#include "utils.hpp"
 #include "static_vector.hpp"
 #include "ls4patricia.hpp"
 #include "key_set.hpp"
@@ -8,6 +9,9 @@
 #include <algorithm>
 #include <type_traits>
 #include <vector>
+#include <queue>
+
+#include "strpool.hpp"
 
 // #define __DEBUG_MARISA__
 #ifdef __DEBUG_MARISA__
@@ -17,21 +21,17 @@
 #endif
 
 
-template <typename Key, typename Container, bool reverse = false>
-class MarisaCC {
+template <typename Key, bool reverse = false>
+class MarisaCC : public StringPool<Key> {
  public:
   using key_type = Key;
-  using container_t = Container;
   using label_vec = StaticVector<uint8_t>;
   using topo_t = LS4Patricia;
-  using next_trie_t = MarisaCC<key_type, container_t, true>;  // all secondary tries store reversed key fragments
+  using strpool_t = StringPool<key_type>;
 
   static constexpr bool reverse_ = reverse;
-  static constexpr uint8_t terminator_ = 0;
-  static constexpr uint32_t link_cutoff_ = 5;  // unary paths must be at least this long to be considered for recursive compression
+  static constexpr uint32_t link_cutoff_ = 4;  // unary paths must be at least this long to be considered for recursive compression
   static_assert(link_cutoff_ >= 2);
-  // stop building the next trie when the total size of unary paths is below this percentage of the original key set size
-  static constexpr int size_percentage_cutoff_ = 10;
 
  private:
   struct Range {
@@ -48,12 +48,11 @@ class MarisaCC {
   MarisaCC() = default;
 
   ~MarisaCC() {
-    delete dict_;
-    delete next_trie_;
+    delete next_;
   }
 
   template <typename Iterator, bool rev = reverse, typename = std::enable_if_t<!rev>>
-  void build(Iterator begin, Iterator end, bool sorted = false, int max_recursion = 0) {
+  void build(Iterator begin, Iterator end, bool sorted = false, int max_recursion = 0, int mask = 0) {
     KeySet<key_type> key_set;
     while (begin != end) {
       key_set.emplace_back(&(*begin));
@@ -63,21 +62,24 @@ class MarisaCC {
     if (!sorted) {
       key_set.sort();
     }
-    build(key_set, max_recursion, key_set.space_cost(), nullptr);
+    build(key_set, key_set.space_cost(), max_recursion, mask);
   }
 
-  auto size_in_bytes() const -> size_t {
-    size_t ret = topo_.size_in_bytes() + labels_.size_in_bytes() + sdsl::size_in_bytes(links_) + sizeof(void *)*2;
-    if (next_trie_ != nullptr) {
-      ret += next_trie_->size_in_bytes();
+  auto size() const -> uint32_t override {
+    if constexpr (!reverse_) {
+      return topo_.num_leaves();
+    } else {
+      return links_.size();
     }
-    if (dict_ != nullptr) {
-      ret += dict_->size_in_bytes();
-    }
+  }
+
+  auto size_in_bytes() const -> size_t override {
+    size_t ret = topo_.size_in_bytes() + labels_.size_in_bytes() + sdsl::size_in_bytes(links_) +
+                 sizeof(void *)*2 + next_->size_in_bytes();
     return ret;
   }
 
-  auto size_in_bits() const -> size_t {
+  auto size_in_bits() const -> size_t override {
     return size_in_bytes() * 8;
   }
 
@@ -97,20 +99,11 @@ class MarisaCC {
       matched_len++;
 
       if (topo_.is_link(pos)) {
-        if (dict_ != nullptr) {
-          assert(next_trie_ == nullptr);
-          uint32_t link_len = dict_->match(key, matched_len, topo_.link_id(pos));
-          if (link_len == -1) {
-            return -1;
-          }
-          matched_len += link_len;
-        } else if (next_trie_ != nullptr) {
-          uint32_t link_len = next_trie_->match_rev(key, matched_len, links_[topo_.link_id(pos)]);
-          if (link_len == -1) {
-            return -1;
-          }
-          matched_len += link_len;
+        uint32_t link_len = next_->match(key, matched_len, topo_.link_id(pos));
+        if (link_len == -1) {
+          return -1;
         }
+        matched_len += link_len;
       }
       if (!topo_.has_child(pos)) {  // branch terminates
         return matched_len == len ? topo_.leaf_id(pos) : -1;
@@ -125,30 +118,23 @@ class MarisaCC {
   }
 
   // returns matched length (-1 on mismatch)
-  template <bool rev = reverse, typename = std::enable_if_t<rev>>
-  auto match_rev(const key_type &key, uint32_t begin, uint32_t leaf_id) const -> uint32_t {
-    assert(leaf_id < topo_.num_leaves());
+  auto match(const key_type &key, uint32_t begin, uint32_t key_id) const -> uint32_t override {
+    if constexpr (!reverse_) {
+      return -1;
+    }
+
+    assert(key_id < size());
     uint32_t len = key.size(), matched_len = begin;
+    uint32_t leaf_id = links_[key_id];
     uint32_t pos = topo_.select_leaf(leaf_id);
 
     while (true) {
       if (topo_.is_link(pos)) {
-        if (next_trie_ != nullptr) {
-          assert(dict_ == nullptr);
-          uint32_t link = links_[topo_.link_id(pos)];
-          uint32_t link_len = next_trie_->match_rev(key, matched_len, link);
-          if (link_len == -1) {
-            return -1;
-          }
-          matched_len += link_len;
-        } else {
-          assert(dict_ != nullptr);
-          uint32_t link_len = dict_->match(key, matched_len, topo_.link_id(pos));
-          if (link_len == -1) {
-            return -1;
-          }
-          matched_len += link_len;
+        uint32_t link_len = next_->match(key, matched_len, topo_.link_id(pos));
+        if (link_len == -1) {
+          return -1;
         }
+        matched_len += link_len;
       } else {
         uint8_t label = labels_.at(topo_.label_id(pos));
         if (label != terminator_) {
@@ -156,7 +142,7 @@ class MarisaCC {
             return -1;
           }
           matched_len++;
-        }  // else terminator, do nothing
+        }
       }
       if (!topo_.has_parent(pos)) {
         break;
@@ -167,10 +153,11 @@ class MarisaCC {
   }
 
  private:
-  void build(KeySet<key_type> &key_set, int max_recursion = 0, size_t original_size = 0, sdsl::int_vector<> *links = nullptr) {
+  void build(const KeySet<key_type> &key_set, size_t original_size,
+             int max_recursion = 0, int mask = 0) override {
     KeySet<key_type> next_key_set;
-    if (links != nullptr) {
-      links->resize(key_set.size());
+    if constexpr (reverse_) {
+      links_.resize(key_set.size());
     }
 
     DEBUG( printf("build: %d\n", reverse_); )
@@ -196,8 +183,8 @@ class MarisaCC {
       uint32_t begin = range.begin_, end = range.begin_;  // group common fragments
 
       while (end < range.end_ && range.depth_ == key_set[end].length_) {  // skip empty suffixes
-        if (links != nullptr) {
-          (*links)[key_set[end].id_] = key_id;
+        if constexpr (reverse_) {
+          links_[key_set[end].id_] = key_id;
         }
         end++;
       }
@@ -256,8 +243,8 @@ class MarisaCC {
         for (uint32_t i = begin; i < end; i++) {
           if (key_set[i].length_ > depth) {
             empty = false;
-          } else if (links != nullptr) {
-            (*links)[key_set[i].id_] = key_id;
+          } else if constexpr (reverse_) {
+            links_[key_set[i].id_] = key_id;
           }
         }
         if (!empty) {
@@ -272,28 +259,19 @@ class MarisaCC {
       }
       topo_.add_node(has_child, is_link, num_branches);
     }
-    topo_.build();
+    topo_.build(reverse_);
     labels_.shrink_to_fit();
+    sdsl::util::bit_compress(links_);
 
-    if (max_recursion > 0 && 100 * next_key_set.space_cost() >= size_percentage_cutoff_ * original_size) {
-      next_key_set.reverse();
-      next_key_set.sort();
-      next_trie_ = new next_trie_t();
-      next_trie_->build(next_key_set, max_recursion - 1, original_size, &links_);
-      sdsl::util::bit_compress(links_);
-    } else {
-      dict_ = new container_t();
-      dict_->build(next_key_set);
-    }
+    next_ = strpool_t::build_optimal(next_key_set, original_size, max_recursion, mask);
   }
 
   topo_t topo_;
   label_vec labels_;
   sdsl::int_vector<> links_;
-  container_t *dict_{nullptr};
-  next_trie_t *next_trie_{nullptr};
+  strpool_t *next_{nullptr};
 
-  friend class MarisaCC<key_type, container_t, false>;
+  template <typename K> friend class StringPool;
 };
 
 

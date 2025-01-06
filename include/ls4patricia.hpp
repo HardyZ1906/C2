@@ -259,7 +259,7 @@ class LS4Patricia {
       }
     }
 
-    void build() {
+    void build(bool sample) {
       if (blocks_ == nullptr) {
         return;
       }
@@ -298,8 +298,13 @@ class LS4Patricia {
 
       // build select index
       init_select();
-      init_sample();
-      init_spill();
+      if (sample) {
+        init_sample();
+        init_spill();
+      } else {
+        sample_ = nullptr;
+        spill_ = nullptr;
+      }
     }
 
     // get the `pos`-th bit of bv<bvnum>
@@ -635,8 +640,8 @@ class LS4Patricia {
     bv_.load_bits(has_child, louds, is_link, 0, size);
   }
 
-  void build() {
-    bv_.build();
+  void build(bool sample = false) {
+    bv_.build(sample);
   }
 
   auto node_start(uint32_t pos) const -> uint32_t {

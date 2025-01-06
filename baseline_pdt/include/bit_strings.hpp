@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-#include "../lib/ds2i/succinct/util.hpp"
+#include "../../lib/ds2i/succinct/util.hpp"
 
 namespace succinct {
 namespace tries {

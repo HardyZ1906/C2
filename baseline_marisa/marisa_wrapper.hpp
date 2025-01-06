@@ -10,7 +10,8 @@ class MarisaWrapper {  // unified API
  public:
   using trie_t = marisa::Trie;
 
-  MarisaWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0, uint32_t max_recursion = 0) {
+  MarisaWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0,
+                int max_recursion = 0, int mask = 0) {
     marisa::Keyset keyset;
     for (const auto &key : keys) {
       keyset.push_back(key.c_str());

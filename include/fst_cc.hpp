@@ -5,6 +5,7 @@
 #include "louds_sparse_cc.hpp"
 #include "bit_vector.hpp"
 #include "key_set.hpp"
+#include "marisa_cc.hpp"
 
 #include <limits>
 #include <vector>
@@ -20,16 +21,15 @@
 
 
 // louds-sparse trie used for building CoCo-trie
-template <typename Key, typename Container>
+template <typename Key>
 class FstCC {
  public:
   using key_type = Key;
-  using container_t = Container;
+  using strpool_t = StringPool<key_type>;
   using label_vec = StaticVector<uint8_t>;
   using topo_t = LoudsSparseCC;
   using bitvec_t = BitVector;
 
-  static constexpr uint8_t terminator_ = 0;
   static constexpr uint32_t link_cutoff_ = 4;  // suffixes of length above this value will be moved to string pool
 
  public:
@@ -203,6 +203,46 @@ class FstCC {
   };
 
  private:
+  class TempStringPool : public StringPool<key_type> {
+   public:
+    using strpool_t = typename succinct::tries::compressed_string_pool<uint8_t>;
+
+    TempStringPool() = default;
+
+    ~TempStringPool() = default;
+
+    void build(const KeySet<key_type> &key_set, size_t original_size = 0,
+               int max_recursion = 0, int mask = 0) {
+      keys_ = key_set;
+    }
+
+    void build(KeySet<key_type> &&key_set) {
+      keys_ = key_set;
+    }
+
+    auto match(const key_type &key, uint32_t begin, uint32_t key_id) const -> uint32_t override {
+      return -1;  // unused
+    }
+
+    auto size() const -> uint32_t override {
+      return keys_.size();
+    }
+
+    auto size_in_bytes() const -> size_t override {
+      return 0;  // unused
+    }
+
+    auto size_in_bits() const -> size_t override {
+      return 0; // unused
+    }
+   private:
+    KeySet<key_type> keys_;
+
+    template <typename K> friend class FstCC;
+    template <typename K> friend class CoCoCC;
+  };
+
+ private:
   struct Range {
     uint32_t begin_{0};
     uint32_t end_{0};
@@ -218,8 +258,13 @@ class FstCC {
  public:
   FstCC() = default;
 
-  template<typename Iterator>
-  void build(Iterator begin, Iterator end, bool sorted = false) {
+  ~FstCC() {
+    delete next_;
+  }
+
+  template <typename Iterator>
+  void build(Iterator begin, Iterator end, bool sorted = false,
+             int max_recursion = 0, int mask = 0) {
     KeySet<key_type> key_set;
     while (begin != end) {
       key_set.emplace_back(&(*begin));
@@ -229,7 +274,7 @@ class FstCC {
     if (!sorted) {
       key_set.sort();
     }
-    build(key_set);
+    build(key_set, false, max_recursion, mask);
   }
 
   void clear() {
@@ -260,7 +305,8 @@ class FstCC {
         if (!is_link_.get(leaf_id)) {
           return matched_len == len ? leaf_id : -1;
         } else {
-          return dict_.match(key, matched_len, is_link_.rank1(leaf_id)) == len - matched_len ? leaf_id : -1;
+          uint32_t link = is_link_.rank1(leaf_id);
+          return next_->match(key, matched_len, link) == len - matched_len ? leaf_id : -1;
         }
       }
       pos = topo_.child_pos(pos);
@@ -278,7 +324,7 @@ class FstCC {
   }
 
   auto size_in_bytes() const -> size_t {
-    return labels_.size_in_bytes() + topo_.size_in_bytes() + dict_.size_in_bytes() + sizeof(uint32_t);
+    return labels_.size_in_bytes() + topo_.size_in_bytes() + next_->size_in_bytes() + sizeof(uint32_t);
   }
 
   auto size_in_bits() const -> size_t {
@@ -286,7 +332,8 @@ class FstCC {
   }
 
  private:
-  void build(KeySet<key_type> &key_set) {
+  void build(const KeySet<key_type> &key_set, bool temp = false,
+             int max_recursion = 0, int mask = 0) {
     KeySet<key_type> suffixes;
 
     auto lcp = [&](uint32_t begin, uint32_t end, uint32_t depth) -> uint32_t {
@@ -388,7 +435,13 @@ class FstCC {
     is_link_.build();
     labels_.shrink_to_fit();
 
-    dict_.build(suffixes);
+    if (!temp) {
+      next_ = strpool_t::build_optimal(suffixes, key_set.space_cost(), max_recursion, mask);
+    } else {
+      auto temp = new TempStringPool();
+      temp->build(std::move(suffixes));
+      next_ = temp;
+    }
   }
 
   label_vec labels_;
@@ -397,11 +450,11 @@ class FstCC {
 
   bitvec_t is_link_;
 
-  container_t dict_;
+  strpool_t *next_{nullptr};
 
   friend class walker;
   template <typename K> friend class CoCoOptimizer;
-  template <typename K, typename C> friend class CoCoCC;
+  template <typename K> friend class CoCoCC;
 };
 
 

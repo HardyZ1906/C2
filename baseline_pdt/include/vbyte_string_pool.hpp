@@ -2,8 +2,8 @@
 
 #include <sstream>
 
-#include "../lib/ds2i/succinct/elias_fano.hpp"
-#include "../lib/ds2i/succinct/vbyte.hpp"
+#include "../../lib/ds2i/succinct/elias_fano.hpp"
+#include "../../lib/ds2i/succinct/vbyte.hpp"
 
 namespace succinct {
 namespace tries {
