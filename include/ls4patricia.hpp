@@ -452,7 +452,7 @@ class LS4Patricia {
     // if not found, return `size_`
     template <int bvnum>
     auto next1(uint32_t pos) const -> uint32_t {
-      static_assert(bvnum == 0 || bvnum == 1);
+      static_assert(bvnum == 0 || bvnum == 1 || bvnum == 2);
 
       if (pos >= size_) {
         return size_;
@@ -474,7 +474,7 @@ class LS4Patricia {
           }
           dist += 64;
         }
-      } else {
+      } else if constexpr (bvnum == 1) {
         const uint64_t &block = blocks_[block_idx / 4].bits1_[block_idx % 4];
         if (block >> remainder) {
           return pos + __builtin_ctzll(block >> remainder);
@@ -483,6 +483,20 @@ class LS4Patricia {
         while (pos + dist < size_) {
           block_idx = (pos + dist) / 64;
           const uint64_t &block = blocks_[block_idx / 4].bits1_[block_idx % 4];
+          if (block) {
+            return pos + dist + __builtin_ctzll(block);
+          }
+          dist += 64;
+        }
+      } else {
+        const uint64_t &block = blocks_[block_idx / 4].bits2_[block_idx % 4];
+        if (block >> remainder) {
+          return pos + __builtin_ctzll(block >> remainder);
+        }
+        dist += 64 - remainder;
+        while (pos + dist < size_) {
+          block_idx = (pos + dist) / 64;
+          const uint64_t &block = blocks_[block_idx / 4].bits2_[block_idx % 4];
           if (block) {
             return pos + dist + __builtin_ctzll(block);
           }
@@ -702,6 +716,10 @@ class LS4Patricia {
 
   auto is_link(uint32_t pos) const -> bool {
     return bv_.template get<2>(pos);
+  }
+
+  auto next_link(uint32_t pos) const -> uint32_t {
+    return bv_.template next1<2>(pos);
   }
 
   auto num_nodes() const -> uint32_t {

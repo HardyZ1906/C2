@@ -1,6 +1,12 @@
 /**
  * Taken from https://github.com/ot/path_decomposed_tries;
- * Changed `char_type` to a template argument to support different label types.
+ * Modified by Kepan Zhang (kzhang600@gatech.edu), 2025
+ *  1. Changed `char_type` to a template argument to support different label types;
+ *  2. Made `RepairStringPool` a friend class;
+ *  3. Created an overloaded constructor for "string_enumerator" that takes the range of encoded key;
+ *  4. Created an overloaded "get_string_enumerator()" function that takes the range of encoded key;
+ *  5. Created a private function `release_positions()` to release ownership of `m_positions`,
+ *     as links are delegated to `RepairStringPool`;
  */
 
 #pragma once
@@ -10,6 +16,9 @@
 #include "repair.hpp"
 #include "../lib/ds2i/succinct/elias_fano.hpp"
 #include "../lib/ds2i/succinct/vbyte.hpp"
+
+
+template <typename K> class RepairStringPool;
 
 namespace succinct {
 namespace tries {
@@ -119,6 +128,16 @@ namespace tries {
                 m_stream_end = stream_range.second;
                 m_sp->m_byte_streams.prefetch(m_stream_begin);
             }
+
+            string_enumerator(compressed_string_pool const* sp, size_t begin, size_t end)
+                : m_sp(sp)
+                , m_stream_begin(begin)
+                , m_stream_end(end)
+                , m_word_begin(0)
+                , m_word_end(0)
+            {
+                m_sp->m_byte_streams.prefetch(m_stream_begin);
+            }
             
             compressed_string_pool const* m_sp;
             size_t m_stream_begin, m_stream_end;
@@ -128,6 +147,11 @@ namespace tries {
         string_enumerator get_string_enumerator(size_t idx) const
         {
             return string_enumerator(this, idx);
+        }
+
+        string_enumerator get_string_enumerator(size_t begin, size_t end) const
+        {
+            return string_enumerator(this, begin, end);
         }
 
         std::string get_string(size_t idx) const
@@ -171,6 +195,12 @@ namespace tries {
         
         mapper::mappable_vector<uint8_t> m_byte_streams;
         elias_fano m_positions;
+
+    private:
+        void release_positions() {
+            elias_fano().swap(m_positions);
+        }
+        template <typename K> friend class ::RepairStringPool;
     };
 
 }

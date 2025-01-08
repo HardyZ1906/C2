@@ -62,7 +62,7 @@ class MarisaCC : public StringPool<Key> {
     if (!sorted) {
       key_set.sort();
     }
-    build(key_set, key_set.space_cost(), max_recursion, mask);
+    build(key_set, nullptr, key_set.space_cost(), max_recursion, mask);
   }
 
   auto size() const -> uint32_t override {
@@ -95,7 +95,7 @@ class MarisaCC : public StringPool<Key> {
       if (pos == end) {  // mismatch
         return -1;
       }
-      assert(labels_.at(pos) == key[matched_len]);
+      assert(labels_[pos] == key[matched_len]);
       matched_len++;
 
       if (topo_.is_link(pos)) {
@@ -111,7 +111,7 @@ class MarisaCC : public StringPool<Key> {
       pos = topo_.child_pos(pos);
     }
 
-    if (labels_.at(pos) == terminator_) {  // prefix key
+    if (labels_[pos] == terminator_) {  // prefix key
       return topo_.leaf_id(pos);
     }
     return -1;
@@ -122,21 +122,32 @@ class MarisaCC : public StringPool<Key> {
     if constexpr (!reverse_) {
       return -1;
     }
-
     assert(key_id < size());
-    uint32_t len = key.size(), matched_len = begin;
-    uint32_t leaf_id = links_[key_id];
-    uint32_t pos = topo_.select_leaf(leaf_id);
+    uint32_t link = links_[key_id];
+    return match_link(key, begin, link);
+  }
 
+  auto match(const key_type &key, uint32_t begin, uint32_t key_id, uint8_t partial_link) const -> uint32_t override {
+    if constexpr (!reverse_) {
+      return -1;
+    }
+    assert(key_id < size());
+    uint32_t link = (links_[key_id] << 8) | partial_link;
+    return match_link(key, begin, link);
+  }
+
+  auto match_link(const key_type &key, uint32_t begin, size_t link) const -> uint32_t {
+    uint32_t pos = topo_.select_leaf(link);
+    uint32_t matched_len = begin;
     while (true) {
       if (topo_.is_link(pos)) {
-        uint32_t link_len = next_->match(key, matched_len, topo_.link_id(pos));
+        uint32_t link_len = next_->match(key, matched_len, topo_.link_id(pos), labels_[pos]);
         if (link_len == -1) {
           return -1;
         }
         matched_len += link_len;
       } else {
-        uint8_t label = labels_.at(topo_.label_id(pos));
+        uint8_t label = labels_[pos];
         if (label != terminator_) {
           if (label != key[matched_len]) {
             return -1;
@@ -153,11 +164,14 @@ class MarisaCC : public StringPool<Key> {
   }
 
  private:
-  void build(const KeySet<key_type> &key_set, size_t original_size,
-             int max_recursion = 0, int mask = 0) override {
+  void build(const KeySet<key_type> &key_set, std::vector<uint8_t> *partial_links = nullptr,
+             size_t original_size = 0, int max_recursion = 0, int mask = 0) override {
     KeySet<key_type> next_key_set;
     if constexpr (reverse_) {
       links_.resize(key_set.size());
+    }
+    if (partial_links != nullptr) {
+      partial_links->resize(key_set.size());
     }
 
     DEBUG( printf("build: %d\n", reverse_); )
@@ -184,7 +198,12 @@ class MarisaCC : public StringPool<Key> {
 
       while (end < range.end_ && range.depth_ == key_set[end].length_) {  // skip empty suffixes
         if constexpr (reverse_) {
-          links_[key_set[end].id_] = key_id;
+          if (partial_links == nullptr) {
+            links_[key_set[end].id_] = key_id;
+          } else {
+            links_[key_set[end].id_] = key_id >> 8;
+            (*partial_links)[key_set[end].id_] = key_id & MASK(8);
+          }
         }
         end++;
       }
@@ -229,6 +248,7 @@ class MarisaCC : public StringPool<Key> {
             DEBUG( printf("move: %c:%s\n", key_set.get_label(begin, range.depth_), next_key_set.back().materialize(true).c_str()); )
           } else {
             auto [pos, len] = key_set.substr_range(begin, range.depth_, depth - range.depth_);
+            labels_.emplace_back(terminator_);
             next_key_set.emplace_back(key_set[begin].key_, pos, len);
             DEBUG( printf("move reverse: %s\n", next_key_set.back().materialize(true).c_str()); )
           }
@@ -244,7 +264,12 @@ class MarisaCC : public StringPool<Key> {
           if (key_set[i].length_ > depth) {
             empty = false;
           } else if constexpr (reverse_) {
-            links_[key_set[i].id_] = key_id;
+            if (partial_links == nullptr) {
+              links_[key_set[i].id_] = key_id;
+            } else {
+              links_[key_set[i].id_] = key_id >> 8;
+              (*partial_links)[key_set[i].id_] = key_id & MASK(8);
+            }
           }
         }
         if (!empty) {
@@ -263,7 +288,17 @@ class MarisaCC : public StringPool<Key> {
     labels_.shrink_to_fit();
     sdsl::util::bit_compress(links_);
 
-    next_ = strpool_t::build_optimal(next_key_set, original_size, max_recursion, mask);
+    if constexpr (reverse_) {
+      std::vector<uint8_t> next_partial_links;
+      next_ = strpool_t::build_optimal(next_key_set, &next_partial_links, original_size, max_recursion, mask);
+      uint32_t pos = -1;
+      for (auto partial_link : next_partial_links) {
+        pos = topo_.next_link(pos + 1);
+        labels_[pos] = partial_link;
+      }
+    } else {
+      next_ = strpool_t::build_optimal(next_key_set, nullptr, original_size, max_recursion, mask);
+    }
   }
 
   topo_t topo_;

@@ -49,9 +49,11 @@ class StringPool {
   static constexpr int REPAIR_FLAG   = BIT(static_cast<int>(Type::REPAIR));
 
   // stop recursion when the total size of unary paths is below this percentage of the original key set size
-  static constexpr float size_percentage_cutoff_ = 15.;
+  static constexpr float size_percentage_cutoff_ = 2.;
   // stop recursion when the average lcp is below this value
   static constexpr float avg_lcp_cutoff_ = 10.;
+  // use UNSORTED or SORTED if average key length is below this value
+  static constexpr float avg_key_len_cutoff_ = 12.;
 
   StringPool() = default;
 
@@ -61,22 +63,31 @@ class StringPool {
   static auto get_optimal_type(const KeySet<key_type> &keys, const KeySet<key_type> &sorted_rev_keys,
                                size_t original_size, int max_recursion, int mask) -> Type {
   #ifdef __DEBUG_RECURSION__
-    return max_recursion > 0 ? Type::TRIE : Type::SORTED;
+    if (max_recursion > 0) {
+      return Type::TRIE;
+    } else if (mask & UNSORTED_FLAG) {
+      return Type::UNSORTED;
+    } else if (mask & SORTED_FLAG) {
+      return Type::SORTED;
+    } else {
+      return Type::REPAIR;
+    }
   #else
-
     if ((mask & MASK(3)) == 0) {
       mask = MASK(3);
     }
     auto [lcp_size, sorted_size] = sorted_rev_keys.lcp_size();
     float avg_lcp = 1.*lcp_size/sorted_rev_keys.size();
+    float avg_key_len = 1.*keys.space_cost()/keys.size();
     DEBUG(
-      printf("original: %f MB, current: %f MB, sorted: %f MB, avg lcp = %f\n", (float)original_size*8/mb_bits,
-             (float)keys.space_cost()*8/mb_bits, (float)sorted_size*8/mb_bits, avg_lcp);
+      printf("original: %f MB, current: %f MB, sorted: %f MB, avg lcp = %f, avg key len = %f\n",
+             (float)original_size*8/mb_bits, (float)keys.space_cost()*8/mb_bits,
+             (float)sorted_size*8/mb_bits, avg_lcp, avg_key_len);
     )
-    if ((max_recursion > 0) && (keys.space_cost() * 100. > original_size * size_percentage_cutoff_) &&
-        (avg_lcp > avg_lcp_cutoff_)) {
+    if ((max_recursion > 0) && (avg_lcp > avg_lcp_cutoff_) &&
+        (keys.space_cost()*100 > original_size*size_percentage_cutoff_)) {
       return Type::TRIE;
-    } else if ((mask & REPAIR_FLAG) && (keys.space_cost() * 100. > original_size * size_percentage_cutoff_) ||
+    } else if ((mask & REPAIR_FLAG) && (avg_key_len > avg_key_len_cutoff_) ||
                !(mask & UNSORTED_FLAG) && !(mask & SORTED_FLAG)) {
       return Type::REPAIR;
     } else {
@@ -89,8 +100,8 @@ class StringPool {
   #endif
   }
 
-  static auto build_optimal(const KeySet<key_type> &keys, size_t original_size,
-                            int max_recursion = 0, int mask = 0) -> StringPool * {
+  static auto build_optimal(const KeySet<key_type> &keys, std::vector<uint8_t> *partial_links = nullptr,
+                            size_t original_size = 0, int max_recursion = 0, int mask = 0) -> StringPool * {
     auto sorted_rev_keys = keys;
     sorted_rev_keys.reverse();
     sorted_rev_keys.sort();
@@ -101,14 +112,14 @@ class StringPool {
      case Type::SORTED:
       DEBUG( printf("max recursion = %d, type = SORTED\n", max_recursion); )
       ret = new sorted_t();
-      ret->build(sorted_rev_keys, original_size, max_recursion - 1, mask);
+      ret->build(sorted_rev_keys, partial_links, original_size, max_recursion - 1, mask);
       DEBUG( printf("max recursion = %d, type = SORTED, cost = %f MB\n",
                     max_recursion, (float)ret->size_in_bits()/mb_bits); )
       return ret;
      case Type::UNSORTED:
       DEBUG( printf("max recursion = %d, type = UNSORTED\n", max_recursion); )
       ret = new unsorted_t();
-      ret->build(keys, original_size, max_recursion - 1, mask);
+      ret->build(keys, partial_links, original_size, max_recursion - 1, mask);
       DEBUG( printf("max recursion = %d, type = UNSORTED, cost = %f MB\n",
                     max_recursion, (float)ret->size_in_bits()/mb_bits); )
       return ret;
@@ -116,23 +127,27 @@ class StringPool {
       assert(max_recursion > 0);
       DEBUG( printf("max recursion = %d, type = TRIE\n", max_recursion); )
       ret = new trie_t();
-      ret->build(sorted_rev_keys, original_size, max_recursion - 1, mask);
+      ret->build(sorted_rev_keys, partial_links, original_size, max_recursion - 1, mask);
       DEBUG( printf("max recursion = %d, type = TRIE, cost = %f MB\n",
                     max_recursion, (float)ret->size_in_bits()/mb_bits); )
       return ret;
      case Type::REPAIR:
       DEBUG( printf("max recursion = %d, type = REPAIR\n", max_recursion); )
       ret = new repair_t();
-      ret->build(keys, original_size, max_recursion - 1, mask);
+      ret->build(keys, partial_links, original_size, max_recursion - 1, mask);
       DEBUG( printf("max recursion = %d, type = REPAIR, cost = %f MB\n",
                     max_recursion, (float)ret->size_in_bits()/mb_bits); )
       return ret;
     }
   }
 
-  virtual void build(const KeySet<key_type> &keys, size_t original_size, int max_recursion = 0, int mask = 0) = 0;
+  virtual void build(const KeySet<key_type> &keys, std::vector<uint8_t> *partial_links = nullptr,
+                     size_t original_size = 0, int max_recursion = 0, int mask = 0) = 0;
 
   virtual auto match(const key_type &key, uint32_t begin, uint32_t key_id) const -> uint32_t = 0;
+
+  virtual auto match(const key_type &key, uint32_t begin, uint32_t key_id,
+                     uint8_t partial_link) const -> uint32_t = 0;
 
   virtual auto size() const -> uint32_t = 0;
 
@@ -151,9 +166,13 @@ class SortedStringPool : public StringPool<Key> {
 
   ~SortedStringPool() = default;
 
-  void build(const KeySet<key_type> &sorted_rev_keys, size_t original_size = 0,
-             int max_recursion = 0, int mask = 0) override {
-    ptrs_.resize(sorted_rev_keys.size());
+  // partial link: 8 low bits of the actual link
+  void build(const KeySet<key_type> &sorted_rev_keys, std::vector<uint8_t> *partial_links = nullptr,
+             size_t original_size = 0, int max_recursion = 0, int mask = 0) override {
+    links_.resize(sorted_rev_keys.size());
+    if (partial_links != nullptr) {
+      partial_links->resize(sorted_rev_keys.size());
+    }
 
     const typename KeySet<key_type>::Fragment *next = nullptr;
     for (size_t i = sorted_rev_keys.size(); i > 0; i--) {
@@ -165,25 +184,45 @@ class SortedStringPool : public StringPool<Key> {
           match++;
         }
         if (match == cur.size()) {  // deduplicate prefix key
-          ptrs_[cur.id_] = labels_.size() - match - 1;
+          size_t link = labels_.size() - match - 1;
+          if (partial_links == nullptr) {
+            links_[cur.id_] = link;
+          } else {
+            links_[cur.id_] = link >> 8;
+            (*partial_links)[cur.id_] = link & MASK(8);
+          }
           continue;
         }
       }
-      ptrs_[cur.id_] = labels_.size();
+      if (partial_links == nullptr) {
+        links_[cur.id_] = labels_.size();
+      } else {
+        links_[cur.id_] = labels_.size() >> 8;
+        (*partial_links)[cur.id_] = labels_.size() & MASK(8);
+      }
       cur.append_to(labels_, true);
       next = &cur;
     }
-    sdsl::util::bit_compress(ptrs_);
+    sdsl::util::bit_compress(links_);
     labels_.shrink_to_fit();
   }
 
   auto match(const key_type &key, uint32_t begin, uint32_t key_id) const -> uint32_t override {
     assert(key_id < size());
+    size_t link = links_[key_id];
+    return match_link(key, begin, link);
+  }
 
-    size_t ptr = ptrs_[key_id];
+  auto match(const key_type &key, uint32_t begin, uint32_t key_id, uint8_t partial_link) const -> uint32_t override {
+    assert(key_id < size());
+    size_t link = (links_[key_id] << 8) | partial_link;
+    return match_link(key, begin, link);
+  }
+
+  auto match_link(const key_type &key, uint32_t begin, size_t link) const -> uint32_t {
     uint32_t matched_len = 0;
-    while (labels_[ptr + matched_len] != terminator_) {
-      if (begin + matched_len >= key.size() || labels_[ptr + matched_len] != key[begin + matched_len]) {
+    while (labels_[link + matched_len] != terminator_) {
+      if (begin + matched_len >= key.size() || labels_[link + matched_len] != key[begin + matched_len]) {
         return -1;
       }
       matched_len++;
@@ -192,11 +231,11 @@ class SortedStringPool : public StringPool<Key> {
   }
 
   auto size() const -> uint32_t override {
-    return ptrs_.size();
+    return links_.size();
   }
 
   auto size_in_bytes() const -> size_t override {
-    return sdsl::size_in_bytes(ptrs_) + labels_.size() * sizeof(uint8_t) + sizeof(labels_);
+    return sdsl::size_in_bytes(links_) + labels_.size() * sizeof(uint8_t) + sizeof(labels_);
   }
 
   auto size_in_bits() const -> size_t override {
@@ -213,7 +252,7 @@ class SortedStringPool : public StringPool<Key> {
   }
  private:
   std::vector<uint8_t> labels_;
-  sdsl::int_vector<> ptrs_;
+  sdsl::int_vector<> links_;
 };
 
 template <typename Key>
@@ -225,44 +264,66 @@ class UnsortedStringPool : public StringPool<Key> {
 
   ~UnsortedStringPool() = default;
 
-  void build(const KeySet<key_type> &keys, size_t original_size = 0,
-             int max_recursion = 0, int mask = 0) override {
-    std::vector<uint32_t> ptrs;
-    ptrs.reserve(keys.size() + 1);
-    ptrs.push_back(0);
+  // partial links: (4 low bits of this link) | (4 low bits of next link)
+  void build(const KeySet<key_type> &keys, std::vector<uint8_t> *partial_links = nullptr,
+             size_t original_size = 0, int max_recursion = 0, int mask = 0) override {
+    std::vector<uint32_t> links;
+    links.reserve(keys.size() + 1);
+    links.push_back(0);
     labels_.reserve(keys.space_cost());
+    if (partial_links != nullptr) {
+      partial_links->reserve(keys.size());
+    }
+    uint8_t prev = 0;
     for (uint32_t i = 0; i < keys.size(); i++) {
       const auto &frag = keys.get(i);
       frag.append_to(labels_, false);
-      ptrs.emplace_back(labels_.size());
+      if (partial_links == nullptr) {
+        links.emplace_back(labels_.size());
+      } else {
+        links.emplace_back(labels_.size() >> 4);
+        partial_links->push_back(prev | (labels_.size() & MASK(4)));
+        prev = (labels_.size() & MASK(4)) << 4;
+      }
     }
     labels_.shrink_to_fit();
-    typename succinct::elias_fano::elias_fano_builder builder(ptrs.back() + 1, ptrs.size());
-    for (uint32_t i = 0; i < ptrs.size(); i++) {
-      builder.push_back(ptrs[i]);
+    typename succinct::elias_fano::elias_fano_builder builder(links.back() + 1, links.size());
+    for (uint32_t i = 0; i < links.size(); i++) {
+      builder.push_back(links[i]);
     }
-    typename succinct::elias_fano(&builder, false).swap(ptrs_);
+    typename succinct::elias_fano(&builder, false).swap(links_);
     labels_.shrink_to_fit();
   }
 
   auto match(const key_type &key, uint32_t begin, uint32_t key_id) const -> uint32_t override {
     assert(key_id < size());
+    auto [link, end] = links_.select_range(key_id);
+    return match_link(key, begin, link, end);
+  }
 
-    auto [pos, end] = ptrs_.select_range(key_id);
-    for (uint32_t i = 0; i < end - pos; i++) {
-      if (begin + i >= key.size() || key[begin + i] != labels_[pos + i]) {
+  auto match(const key_type &key, uint32_t begin, uint32_t key_id, uint8_t partial_link) const -> uint32_t override {
+    assert(key_id < size());
+    auto [link, end] = links_.select_range(key_id);
+    link = (link << 4) | (partial_link >> 4);
+    end = (end << 4) | (partial_link & MASK(4));
+    return match_link(key, begin, link, end);
+  }
+
+  auto match_link(const key_type &key, uint32_t begin, size_t link, size_t end) const -> uint32_t {
+    for (uint32_t i = 0; i < end - link; i++) {
+      if (begin + i >= key.size() || key[begin + i] != labels_[link + i]) {
         return -1;
       }
     }
-    return end - pos;
+    return end - link;
   }
 
   auto size() const -> uint32_t override {
-    return ptrs_.num_ones();
+    return links_.num_ones();
   }
 
   auto size_in_bytes() const -> size_t override {
-    return succinct::mapper::size_of(const_cast<succinct::elias_fano &>(ptrs_)) +
+    return succinct::mapper::size_of(const_cast<succinct::elias_fano &>(links_)) +
            labels_.size() * sizeof(uint8_t) + sizeof(labels_);
   }
 
@@ -282,12 +343,12 @@ class UnsortedStringPool : public StringPool<Key> {
     size_t num_labels = keys.space_cost();
     size_t n = num_labels + 1;
     size_t m = keys.size();
-    size_t ptrs_cost = estimate_elias_fano_cost(n, m);
-    return ptrs_cost + num_labels*8;
+    size_t links_cost = estimate_elias_fano_cost(n, m);
+    return links_cost + num_labels*8;
   }
  private:
   std::vector<uint8_t> labels_;
-  succinct::elias_fano ptrs_;
+  succinct::elias_fano links_;
 };
 
 template <typename Key>
@@ -300,19 +361,40 @@ class RepairStringPool : public StringPool<Key> {
 
   ~RepairStringPool() = default;
 
-  void build(const KeySet<key_type> &key_set, size_t original_size = 0,
-             int max_recursion = 0, int mask = 0) override {
+  // partial links: (4 low bits of this link) | (4 low bits of next link)
+  void build(const KeySet<key_type> &key_set, std::vector<uint8_t> *partial_links = nullptr,
+             size_t original_size = 0, int max_recursion = 0, int mask = 0) override {
     std::vector<uint8_t> keys;
     for (const auto &frag : key_set.fragments_) {
       frag.append_to(keys);
     }
-    build(keys);
+    build(keys, partial_links);
   }
 
-  void build(std::vector<uint8_t> keys) {
+  void build(std::vector<uint8_t> keys, std::vector<uint8_t> *partial_links = nullptr) {
     if (!keys.empty()) {
       strpool_t strpool(keys);
       strpool_.swap(strpool);
+      if (partial_links == nullptr) {
+        links_.swap(strpool_.m_positions);
+      } else {
+        auto enu = typename succinct::elias_fano::select_enumerator(strpool_.m_positions, 1);
+
+        size_t n = (strpool_.m_positions.select(strpool_.size()) >> 4) + 1;
+        size_t m = strpool_.size() + 1;
+        typename succinct::elias_fano::elias_fano_builder builder(n, m);
+        uint8_t prev = 0;
+        builder.push_back(0);
+        partial_links->reserve(m - 1);
+        for (size_t i = 0; i < m - 1; i++) {
+          size_t link = enu.next();
+          builder.push_back(link >> 4);
+          partial_links->push_back(prev | link & MASK(4));
+          prev = (link & MASK(4)) << 4;
+        }
+        strpool_.release_positions();
+        typename succinct::elias_fano(&builder, false).swap(links_);
+      }
     } else {
       strpool_t strpool;
       strpool_.swap(strpool);
@@ -321,8 +403,20 @@ class RepairStringPool : public StringPool<Key> {
 
   auto match(const key_type &key, uint32_t begin, uint32_t key_id) const -> uint32_t override {
     assert(key_id < size());
+    auto [link, end] = links_.select_range(key_id);
+    return match_link(key, begin, link, end);
+  }
 
-    auto enu = strpool_.get_string_enumerator(key_id);
+  auto match(const key_type &key, uint32_t begin, uint32_t key_id, uint8_t partial_link) const -> uint32_t override {
+    assert(key_id < size());
+    auto [link, end] = links_.select_range(key_id);
+    link = (link << 4) | (partial_link >> 4);
+    end = (end << 4) | (partial_link & MASK(4));
+    return match_link(key, begin, link, end);
+  }
+
+  auto match_link(const key_type &key, uint32_t begin, size_t link, size_t end) const -> uint32_t {
+    auto enu = strpool_.get_string_enumerator(link, end);
     uint32_t matched_len = 0;
     uint8_t label;
     while ((label = enu.next()) != terminator_) {
@@ -339,7 +433,8 @@ class RepairStringPool : public StringPool<Key> {
   }
 
   auto size_in_bytes() const -> size_t override {
-    return succinct::mapper::size_of(const_cast<strpool_t &>(strpool_));
+    return succinct::mapper::size_of(const_cast<strpool_t &>(strpool_)) +
+           succinct::mapper::size_of(const_cast<succinct::elias_fano &>(links_));
   }
 
   auto size_in_bits() const -> size_t override {
@@ -347,6 +442,7 @@ class RepairStringPool : public StringPool<Key> {
   }
  private:
   strpool_t strpool_;
+  succinct::elias_fano links_;
 };
 
 

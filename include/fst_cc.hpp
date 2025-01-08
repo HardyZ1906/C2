@@ -211,8 +211,8 @@ class FstCC {
 
     ~TempStringPool() = default;
 
-    void build(const KeySet<key_type> &key_set, size_t original_size = 0,
-               int max_recursion = 0, int mask = 0) {
+    void build(const KeySet<key_type> &key_set, std::vector<uint8_t> *partial_links,
+               size_t original_size = 0, int max_recursion = 0, int mask = 0) override {
       keys_ = key_set;
     }
 
@@ -221,6 +221,11 @@ class FstCC {
     }
 
     auto match(const key_type &key, uint32_t begin, uint32_t key_id) const -> uint32_t override {
+      return -1;  // unused
+    }
+
+    auto match(const key_type &key, uint32_t begin, uint32_t key_id,
+               uint8_t partial_link) const -> uint32_t override {
       return -1;  // unused
     }
 
@@ -436,7 +441,7 @@ class FstCC {
     labels_.shrink_to_fit();
 
     if (!temp) {
-      next_ = strpool_t::build_optimal(suffixes, key_set.space_cost(), max_recursion, mask);
+      next_ = strpool_t::build_optimal(suffixes, nullptr, key_set.space_cost(), max_recursion, mask);
     } else {
       auto temp = new TempStringPool();
       temp->build(std::move(suffixes));

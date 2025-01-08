@@ -52,6 +52,6 @@ class ArtWrapper {  // unified API
   }
  private:
   trie_t *trie_{nullptr};
-  char *db_{nullptr};  // the actual keys; this is needed because ART is actually a filter, since it discards long unary paths
+  char *db_{nullptr};  // the actual keys; this is needed because ART is a filter and may return false positives
   uint32_t max_key_len_{0};
 };

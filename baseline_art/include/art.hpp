@@ -5,7 +5,7 @@
 
   Modified by Huanchen Zhang, 2016
 
-	Modified by Kepan Zhang (kzhang600@gatech.edu), 2022
+	Modified by Kepan Zhang (kzhang600@gatech.edu), 2024
 	Changed source files to header-only form
  */
 #pragma once

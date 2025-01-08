@@ -44,8 +44,8 @@ class CoCoCC {
 
   CoCoCC() = default;
 
-  CoCoCC(optimizer_t &opt, size_t original_size, int max_recursion = 0, int mask = 0) {
-    build(opt, original_size, max_recursion, mask);
+  CoCoCC(optimizer_t &opt, int max_recursion = 0, int mask = 0) {
+    build(opt, max_recursion, mask);
   }
 
   template <typename Iterator>
@@ -71,13 +71,13 @@ class CoCoCC {
     }
 
     typename optimizer_t::trie_t trie;
-    trie.build(key_set, true, max_recursion, mask);
+    trie.build(key_set, true, max_recursion);
     optimizer_t opt(&trie);
     opt.optimize(space_relaxation);
-    build(opt, key_set.space_cost(), max_recursion);
+    build(opt, key_set.space_cost(), max_recursion, mask);
   }
 
-  void build(optimizer_t &opt, size_t original_size, int max_recursion = 0, int mask = 0) {
+  void build(optimizer_t &opt, size_t original_size = 0, int max_recursion = 0, int mask = 0) {
     alphabet_ = opt.alphabet_;
     topo_.reserve(opt.states_[0].num_macros_ + opt.states_[0].num_leaves_);
     ptrs_.resize(opt.states_[0].num_macros_ + 1);
@@ -211,7 +211,7 @@ class CoCoCC {
     DEBUG( printf("final encoding cost: %ld\n", bv.size()); )
     topo_.build();
     is_link_.build();
-    next_ = strpool_t::build_optimal(suffixes, original_size, max_recursion, mask);
+    next_ = strpool_t::build_optimal(suffixes, nullptr, original_size, max_recursion, mask);
     sdsl::util::bit_compress(ptrs_);
     new (&macros_) succinct::bit_vector(&bv);
   }
