@@ -19,10 +19,16 @@
 
 // #define __DEBUG_COCO__
 #ifdef __DEBUG_COCO__
-# include <iostream>
 # define DEBUG(foo) foo
 #else
 # define DEBUG(foo)
+#endif
+
+#define __BENCH_COCO__
+#ifdef __BENCH_COCO__
+# define BENCH(foo) foo
+#else
+# define BENCH(foo)
 #endif
 
 
@@ -41,6 +47,22 @@ class CoCoCC {
   static constexpr uint8_t depth_bits_ = optimizer_t::depth_bits_;
   static constexpr uint32_t degree_threshold_ = optimizer_t::degree_threshold_;
   static constexpr uint32_t bv_block_sz_ = optimizer_t::bv_block_sz_;
+
+#ifdef __BENCH_COCO__
+  static uint64_t build_fst_time_;
+  static uint64_t optimize_time_;
+  static uint64_t build_trie_time_;
+  static uint64_t build_tail_time_;
+#endif
+  static void print_bench() {
+  #ifdef __BENCH_COCO__
+    printf("build FST: %lf ms, optimize: %lf ms, build trie: %lf ms, build tail: %lf ms\n",
+           (double)build_fst_time_/1000000, (double)optimize_time_/1000000,
+           (double)build_trie_time_/1000000, (double)build_tail_time_/1000000);
+  #else
+    printf("disabled\n");
+  #endif
+  }
 
   CoCoCC() = default;
 
@@ -70,11 +92,16 @@ class CoCoCC {
       key_set.sort();
     }
 
+    BENCH( auto t0 = std::chrono::high_resolution_clock::now(); )
     typename optimizer_t::trie_t trie;
     trie.build(key_set, true, max_recursion);
+    BENCH( auto t1 = std::chrono::high_resolution_clock::now(); )
     optimizer_t opt(&trie);
     opt.optimize(space_relaxation);
+    BENCH( auto t2 = std::chrono::high_resolution_clock::now(); )
     build(opt, key_set.space_cost(), max_recursion, mask);
+    BENCH( build_fst_time_ += (t1 - t0).count(); )
+    BENCH( optimize_time_ += (t2 - t1).count(); )
   }
 
   void build(optimizer_t &opt, size_t original_size = 0, int max_recursion = 0, int mask = 0) {
@@ -104,6 +131,7 @@ class CoCoCC {
       }
     };
 
+    BENCH( auto t0 = std::chrono::high_resolution_clock::now(); )
     push_to_queue(0, -1);
     uint32_t macro_id = 0;
     while (!queue.empty()) {
@@ -211,9 +239,14 @@ class CoCoCC {
     DEBUG( printf("final encoding cost: %ld\n", bv.size()); )
     topo_.build();
     is_link_.build();
-    next_ = strpool_t::build_optimal(suffixes, nullptr, original_size, max_recursion, mask);
     sdsl::util::bit_compress(ptrs_);
     new (&macros_) succinct::bit_vector(&bv);
+    BENCH( auto t1 = std::chrono::high_resolution_clock::now(); )
+
+    next_ = strpool_t::build_optimal(suffixes, nullptr, original_size, max_recursion, mask);
+    BENCH( auto t2 = std::chrono::high_resolution_clock::now(); )
+    BENCH( build_trie_time_ += (t1 - t0).count(); )
+    BENCH( build_tail_time_ += (t2 - t1).count(); )
   }
 
   auto lookup(const key_type &key) const -> uint32_t {
@@ -635,4 +668,12 @@ class CoCoCC {
   uint32_t link_bits_{0};  // #bits consumed by each link pointer
 };
 
+#ifdef __BENCH_COCO__
+template <typename K> uint64_t CoCoCC<K>::build_fst_time_ = 0;
+template <typename K> uint64_t CoCoCC<K>::optimize_time_ = 0;
+template <typename K> uint64_t CoCoCC<K>::build_trie_time_ = 0;
+template <typename K> uint64_t CoCoCC<K>::build_tail_time_ = 0;
+#endif
+
 #undef DEBUG
+#undef BENCH

@@ -20,6 +20,13 @@
 # define DEBUG(foo)
 #endif
 
+#define __BENCH_MARISA__
+#ifdef __BENCH_MARISA__
+# define BENCH(foo) foo
+#else
+# define BENCH(foo)
+#endif
+
 
 template <typename Key, bool reverse = false>
 class MarisaCC : public StringPool<Key> {
@@ -32,6 +39,19 @@ class MarisaCC : public StringPool<Key> {
   static constexpr bool reverse_ = reverse;
   static constexpr uint32_t link_cutoff_ = 4;  // unary paths must be at least this long to be considered for recursive compression
   static_assert(link_cutoff_ >= 2);
+
+#ifdef __BENCH_MARISA__
+  static uint64_t build_trie_time_;
+  static uint64_t build_tail_time_;
+#endif
+  static void print_bench() {
+  #ifdef __BENCH_MARISA__
+    printf("build trie: %lf ms, build tail: %lf ms\n",
+           (double)build_trie_time_/1000000, (double)build_tail_time_/1000000);
+  #else
+    printf("disabled\n");
+  #endif
+  }
 
  private:
   struct Range {
@@ -182,6 +202,7 @@ class MarisaCC : public StringPool<Key> {
       }
     }
    #endif
+    BENCH( auto t0 = std::chrono::high_resolution_clock::now(); )
     uint32_t key_id = 0;
     std::queue<Range> queue;
     queue.push(Range(0, key_set.size(), 0));
@@ -287,6 +308,7 @@ class MarisaCC : public StringPool<Key> {
     topo_.build(reverse_);
     labels_.shrink_to_fit();
     sdsl::util::bit_compress(links_);
+    BENCH( auto t1 = std::chrono::high_resolution_clock::now(); )
 
     if constexpr (reverse_) {
       std::vector<uint8_t> next_partial_links;
@@ -299,6 +321,10 @@ class MarisaCC : public StringPool<Key> {
     } else {
       next_ = strpool_t::build_optimal(next_key_set, nullptr, original_size, max_recursion, mask);
     }
+    BENCH( auto t2 = std::chrono::high_resolution_clock::now(); )
+
+    BENCH( build_trie_time_ += (t1 - t0).count(); )
+    BENCH( build_tail_time_ += (t2 - t1).count(); )
   }
 
   topo_t topo_;
@@ -308,6 +334,11 @@ class MarisaCC : public StringPool<Key> {
 
   template <typename K> friend class StringPool;
 };
+
+#ifdef __BENCH_MARISA__
+template <typename K, bool r> uint64_t MarisaCC<K, r>::build_trie_time_ = 0;
+template <typename K, bool r> uint64_t MarisaCC<K, r>::build_tail_time_ = 0;
+#endif
 
 
 #undef DEBUG

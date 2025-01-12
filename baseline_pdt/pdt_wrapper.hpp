@@ -23,6 +23,10 @@ class PdtWrapper {  // unified API
   auto space_cost() const -> size_t {
     return succinct::mapper::size_of(const_cast<trie_t &>(trie_)) * 8;
   }
+
+  static void print_bench() {
+    printf("not implemented\n");
+  }
  private:
   trie_t trie_;
 };

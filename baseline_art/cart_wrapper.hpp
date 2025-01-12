@@ -51,6 +51,10 @@ class CArtWrapper {  // unified API
   auto space_cost() const -> size_t {
     return const_cast<trie_t *>(trie_)->getMemory() * 8;
   }
+
+  static void print_bench() {
+    printf("not implemented\n");
+  }
  private:
   trie_t *trie_{nullptr};
   char *db_{nullptr};  // the actual keys; this is needed because CART is a filter and may return false positives

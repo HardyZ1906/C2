@@ -20,6 +20,10 @@ class FstWrapper {  // unified API
   auto space_cost() const -> size_t {
     return trie_.getMemoryUsage() * 8;
   }
+
+  static void print_bench() {
+    printf("not implemented\n");
+  }
  private:
   trie_t trie_;
 };

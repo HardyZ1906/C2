@@ -30,6 +30,10 @@ class CoCoWrapper {  // unified API
   auto space_cost() const -> size_t {
     return trie_.size_in_bits();
   }
+
+  static void print_bench() {
+    printf("not implemented\n");
+  }
  private:
   trie_t trie_;
 };

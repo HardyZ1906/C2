@@ -19,6 +19,13 @@
 # define DEBUG(foo)
 #endif
 
+#define __BENCH_FST__
+#ifdef __BENCH_FST__
+# define BENCH(foo) foo
+#else
+# define BENCH(foo)
+#endif
+
 
 // louds-sparse trie used for building CoCo-trie
 template <typename Key>
@@ -31,6 +38,19 @@ class FstCC {
   using bitvec_t = BitVector;
 
   static constexpr uint32_t link_cutoff_ = 4;  // suffixes of length above this value will be moved to string pool
+
+#ifdef __BENCH_FST__
+  static uint64_t build_trie_time_;
+  static uint64_t build_tail_time_;
+#endif
+  static void print_bench() {
+  #ifdef __BENCH_FST__
+    printf("build trie: %lf ms, build tail: %lf ms\n",
+           (double)build_trie_time_/1000000, (double)build_tail_time_/1000000);
+  #else
+    printf("disabled\n");
+  #endif
+  }
 
  public:
   // helper class for walking down the trie and traversing macro-node keys; used by the optimizer
@@ -362,6 +382,7 @@ class FstCC {
       return range.lcp_ == key_set[range.end_ - 1].length_ - range.depth_;
     };
 
+    BENCH( auto t0 = std::chrono::high_resolution_clock::now(); )
     std::queue<Range> queue;
     queue.push(Range(0, key_set.size(), 0, lcp(0, key_set.size(), 0)));
     while (!queue.empty()) {
@@ -439,6 +460,7 @@ class FstCC {
     topo_.build();
     is_link_.build();
     labels_.shrink_to_fit();
+    BENCH( auto t1 = std::chrono::high_resolution_clock::now(); )
 
     if (!temp) {
       next_ = strpool_t::build_optimal(suffixes, nullptr, key_set.space_cost(), max_recursion, mask);
@@ -447,6 +469,9 @@ class FstCC {
       temp->build(std::move(suffixes));
       next_ = temp;
     }
+    BENCH( auto t2 = std::chrono::high_resolution_clock::now(); )
+    BENCH( build_trie_time_ += (t1 - t0).count(); )
+    BENCH( build_tail_time_ += (t2 - t1).count(); )
   }
 
   label_vec labels_;
@@ -462,5 +487,10 @@ class FstCC {
   template <typename K> friend class CoCoCC;
 };
 
+#ifdef __BENCH_FST__
+template <typename K> uint64_t FstCC<K>::build_trie_time_ = 0;
+template <typename K> uint64_t FstCC<K>::build_tail_time_ = 0;
+#endif
 
 #undef DEBUG
+#undef BENCH

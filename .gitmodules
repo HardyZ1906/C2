@@ -7,6 +7,6 @@
 [submodule "lib/sux"]
 	path = lib/sux
 	url = https://github.com/vigna/sux.git
-[submodule "marisa"]
+[submodule "baseline_marisa/marisa"]
 	path = baseline_marisa/marisa
 	url = https://github.com/s-yata/marisa-trie.git
