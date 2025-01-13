@@ -53,6 +53,15 @@ class MarisaCC : public StringPool<Key> {
   #endif
   }
 
+  void print_space_cost_breakdown() const {
+    size_t topo_cost = topo_.size_in_bits();
+    size_t link_cost = sdsl::size_in_bytes(links_) * 8;
+    size_t label_cost = labels_.size_in_bits();
+    size_t tail_cost = next_->size_in_bits();
+    printf("topology: %lf MB, link: %lf MB, labels: %lf MB, tail: %lf MB\n", (double)topo_cost/mb_bits,
+           (double)link_cost/mb_bits, (double)label_cost/mb_bits, (double)tail_cost/mb_bits);
+  }
+
  private:
   struct Range {
     uint32_t begin_{0};
@@ -94,8 +103,7 @@ class MarisaCC : public StringPool<Key> {
   }
 
   auto size_in_bytes() const -> size_t override {
-    size_t ret = topo_.size_in_bytes() + labels_.size_in_bytes() + sdsl::size_in_bytes(links_) +
-                 sizeof(void *)*2 + next_->size_in_bytes();
+    size_t ret = topo_.size_in_bytes() + labels_.size_in_bytes() + sdsl::size_in_bytes(links_) + next_->size_in_bytes();
     return ret;
   }
 
@@ -157,7 +165,7 @@ class MarisaCC : public StringPool<Key> {
   }
 
   auto match_link(const key_type &key, uint32_t begin, size_t link) const -> uint32_t {
-    uint32_t pos = topo_.select_leaf(link);
+    uint32_t pos = link;
     uint32_t matched_len = begin;
     while (true) {
       if (topo_.is_link(pos)) {
@@ -204,6 +212,7 @@ class MarisaCC : public StringPool<Key> {
    #endif
     BENCH( auto t0 = std::chrono::high_resolution_clock::now(); )
     uint32_t key_id = 0;
+    uint32_t branch_id = 0;
     std::queue<Range> queue;
     queue.push(Range(0, key_set.size(), 0));
     while (!queue.empty()) {
@@ -220,10 +229,10 @@ class MarisaCC : public StringPool<Key> {
       while (end < range.end_ && range.depth_ == key_set[end].length_) {  // skip empty suffixes
         if constexpr (reverse_) {
           if (partial_links == nullptr) {
-            links_[key_set[end].id_] = key_id;
+            links_[key_set[end].id_] = branch_id;
           } else {
-            links_[key_set[end].id_] = key_id >> 8;
-            (*partial_links)[key_set[end].id_] = key_id & MASK(8);
+            links_[key_set[end].id_] = branch_id >> 8;
+            (*partial_links)[key_set[end].id_] = branch_id & MASK(8);
           }
         }
         end++;
@@ -232,6 +241,7 @@ class MarisaCC : public StringPool<Key> {
         DEBUG( printf("range (%d, %d, %d): (terminator)\n", begin, end, range.depth_); )
         DEBUG( printf("key ID %d: %s\n", key_id, key_set.materialize(begin).c_str()); )
         num_branches++;
+        branch_id++;
         key_id++;
         labels_.emplace_back(terminator_);
         begin = end;
@@ -286,10 +296,10 @@ class MarisaCC : public StringPool<Key> {
             empty = false;
           } else if constexpr (reverse_) {
             if (partial_links == nullptr) {
-              links_[key_set[i].id_] = key_id;
+              links_[key_set[i].id_] = branch_id;
             } else {
-              links_[key_set[i].id_] = key_id >> 8;
-              (*partial_links)[key_set[i].id_] = key_id & MASK(8);
+              links_[key_set[i].id_] = branch_id >> 8;
+              (*partial_links)[key_set[i].id_] = branch_id & MASK(8);
             }
           }
         }
@@ -301,11 +311,12 @@ class MarisaCC : public StringPool<Key> {
           key_id++;
         }
         num_branches++;
+        branch_id++;
         begin = end;
       }
       topo_.add_node(has_child, is_link, num_branches);
     }
-    topo_.build(reverse_);
+    topo_.build(false);
     labels_.shrink_to_fit();
     sdsl::util::bit_compress(links_);
     BENCH( auto t1 = std::chrono::high_resolution_clock::now(); )

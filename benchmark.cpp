@@ -41,6 +41,10 @@ class FstCCWrapper {  // unified API
   static void print_bench() {
     trie_t::print_bench();
   }
+
+  void print_space_cost_breakdown() const {
+    trie_.print_space_cost_breakdown();
+  }
  private:
   trie_t trie_;
 };
@@ -63,6 +67,10 @@ class CoCoCCWrapper {  // unified API
 
   static void print_bench() {
     trie_t::print_bench();
+  }
+
+  void print_space_cost_breakdown() const {
+    trie_.print_space_cost_breakdown();
   }
  private:
   trie_t trie_;
@@ -88,6 +96,10 @@ class MarisaCCWrapper {  // unified API
   static void print_bench() {
     trie_t::print_bench();
   }
+
+  void print_space_cost_breakdown() const {
+    trie_.print_space_cost_breakdown();
+  }
  private:
   trie_t trie_;
 };
@@ -101,12 +113,12 @@ void __attribute__((noinline)) query_trie(const std::vector<std::string> &keys, 
   for (uint32_t i = 0; i < keys.size(); i++) {
   #ifdef __CORRECTNESS_TEST__
     bool positive = positive_queries.count(keys[i]);
-    // printf("lookup %d: %s %s\n", i, keys[i].c_str(), positive ? "(positive)" : "(negative)");
+    printf("lookup %d: %s %s\n", i, keys[i].c_str(), positive ? "(positive)" : "(negative)");
   #endif
     volatile uint32_t key_id = trie.lookup(keys[i]);
   #ifdef __CORRECTNESS_TEST__
     uint32_t id = key_id;
-    // printf("id = %d\n", id);
+    printf("id = %d\n", id);
     if (positive) {
       EXPECT(id != -1);
       if constexpr (std::is_same_v<trie_t, FstCCWrapper> || std::is_same_v<trie_t, CoCoCCWrapper> ||
@@ -163,6 +175,7 @@ void __attribute__((noinline)) test_trie(const char *filename, uint32_t space_re
   printf("Done!\n");
   printf("total time: %lf ms, avg latency: %lf ns\n", (double)duration/1000000, (double)duration/keys.size());
   trie_t::print_bench();
+  trie.print_space_cost_breakdown();
   printf("[PASSED]\n");
 }
 

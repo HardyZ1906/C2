@@ -52,6 +52,15 @@ class FstCC {
   #endif
   }
 
+  void print_space_cost_breakdown() const {
+    size_t topo_cost = topo_.size_in_bits();
+    size_t link_cost = is_link_.size_in_bits();
+    size_t label_cost = labels_.size_in_bits();
+    size_t tail_cost = next_->size_in_bits();
+    printf("topology: %lf MB, link: %lf MB, labels: %lf MB, tail: %lf MB\n", (double)topo_cost/mb_bits,
+           (double)link_cost/mb_bits, (double)label_cost/mb_bits, (double)tail_cost/mb_bits);
+  }
+
  public:
   // helper class for walking down the trie and traversing macro-node keys; used by the optimizer
   struct walker {
@@ -349,7 +358,7 @@ class FstCC {
   }
 
   auto size_in_bytes() const -> size_t {
-    return labels_.size_in_bytes() + topo_.size_in_bytes() + next_->size_in_bytes() + sizeof(uint32_t);
+    return labels_.size_in_bytes() + topo_.size_in_bytes() + next_->size_in_bytes() + is_link_.size_in_bytes();
   }
 
   auto size_in_bits() const -> size_t {

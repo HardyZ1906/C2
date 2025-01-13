@@ -51,9 +51,9 @@ class StringPool {
   // stop recursion when the total size of unary paths is below this percentage of the original key set size
   static constexpr float size_percentage_cutoff_ = 2.;
   // stop recursion when the average lcp is below this value
-  static constexpr float avg_lcp_cutoff_ = 10.;
+  static constexpr float avg_lcp_cutoff_ = 8.;
   // use UNSORTED or SORTED if average key length is below this value
-  static constexpr float avg_key_len_cutoff_ = 12.;
+  static constexpr float avg_key_len_cutoff_ = 8.;
 
   StringPool() = default;
 

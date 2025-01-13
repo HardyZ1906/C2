@@ -64,6 +64,17 @@ class CoCoCC {
   #endif
   }
 
+  void print_space_cost_breakdown() const {
+    size_t topo_cost = topo_.size_in_bits();
+    size_t link_cost = is_link_.size_in_bits();
+    size_t ptrs_cost = sdsl::size_in_bytes(ptrs_)*8;
+    size_t encoding_cost = macros_.size();
+    size_t tail_cost = next_->size_in_bits();
+    printf("topology: %lf MB, link: %lf MB, pointers: %lf MB, encoding: %lf MB, tail: %lf MB\n",
+           (double)topo_cost/mb_bits, (double)link_cost/mb_bits, (double)ptrs_cost/mb_bits,
+           (double)encoding_cost/mb_bits, (double)tail_cost/mb_bits);
+  }
+
   CoCoCC() = default;
 
   CoCoCC(optimizer_t &opt, int max_recursion = 0, int mask = 0) {
@@ -366,7 +377,7 @@ class CoCoCC {
   }
 
   auto size_in_bits() const -> size_t {
-    return topo_.size_in_bits() + sdsl::size_in_bytes(ptrs_)*8 + macros_.size() + next_->size_in_bits();
+    return topo_.size_in_bits() + sdsl::size_in_bytes(ptrs_)*8 + macros_.size() + next_->size_in_bits() + is_link_.size_in_bits();
   }
 
   auto get_num_nodes() const -> std::pair<uint32_t, uint32_t> {
@@ -665,7 +676,6 @@ class CoCoCC {
   sdsl::int_vector<> ptrs_;
   succinct::bit_vector macros_;  // macro node encoding
   strpool_t *next_{nullptr};
-  uint32_t link_bits_{0};  // #bits consumed by each link pointer
 };
 
 #ifdef __BENCH_COCO__
