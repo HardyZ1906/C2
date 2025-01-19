@@ -5,6 +5,7 @@
 #include "include/utils.hpp"
 #include "include/uncompacted_trie.hpp"
 #include "include/CoCo-trie_v2.hpp"
+#include "../include/utils.hpp"
 
 #include <vector>
 #include <string>
@@ -23,7 +24,7 @@ class CoCoWrapper {  // unified API
                   return trie_t(keys);
                 }()) {}
 
-  auto lookup(const std::string &key) const -> uint32_t {
+  __NOINLINE_IF_PROFILE auto lookup(const std::string &key) const -> uint32_t {
     return trie_.look_up(key);
   }
 

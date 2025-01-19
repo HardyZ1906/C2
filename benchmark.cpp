@@ -30,7 +30,7 @@ class FstCCWrapper {  // unified API
     trie_.build(keys.begin(), keys.end(), true, max_recursion, mask);
   }
 
-  auto lookup(const std::string &key) const -> uint32_t {
+  __NOINLINE_IF_PROFILE auto lookup(const std::string &key) const -> uint32_t {
     return trie_.lookup(key);
   }
 
@@ -57,7 +57,7 @@ class CoCoCCWrapper {  // unified API
                 int max_recursion = 0, int mask = 0)
                 : trie_(keys.begin(), keys.end(), true, space_relaxation, max_recursion, mask) {}
 
-  auto lookup(const std::string &key) const -> uint32_t {
+  __NOINLINE_IF_PROFILE auto lookup(const std::string &key) const -> uint32_t {
     return trie_.lookup(key);
   }
 
@@ -85,7 +85,7 @@ class MarisaCCWrapper {  // unified API
     trie_.build(keys.begin(), keys.end(), true, max_recursion, mask);
   }
 
-  auto lookup(const std::string &key) const -> uint32_t {
+  __NOINLINE_IF_PROFILE auto lookup(const std::string &key) const -> uint32_t {
     return trie_.lookup(key);
   }
 
@@ -106,7 +106,7 @@ class MarisaCCWrapper {  // unified API
 
 template <typename trie_t>
 void __attribute__((noinline)) query_trie(const std::vector<std::string> &keys, const trie_t &trie,
-                                          const std::unordered_set<std::string> positive_queries) {
+                                          const std::unordered_set<std::string> &positive_queries) {
 #ifdef __CORRECTNESS_TEST__
   std::unordered_set<uint32_t> key_ids;
 #endif
@@ -149,10 +149,22 @@ void __attribute__((noinline)) test_trie(const char *filename, uint32_t space_re
   keys.erase(new_end, keys.end());
 
   std::shuffle(keys.begin(), keys.end(), std::mt19937{1});
-  size_t query_size = keys.size() * positive_percentage / 100;
-  std::vector<std::string> trie_keys(keys.begin(), keys.begin() + query_size);
-  std::unordered_set<std::string> trie_key_set(trie_keys.begin(), trie_keys.end());
+  std::vector<std::string> trie_keys;
+  if (positive_percentage == 100) {
+    trie_keys = keys;
+  } else {
+    size_t trie_size = keys.size() / 2;
+    trie_keys.insert(trie_keys.end(), keys.begin(), keys.begin() + trie_size);
+
+    size_t num_positives = positive_percentage * trie_size / 100;
+    size_t num_negatives = trie_size - num_positives;
+    std::vector<std::string> tmp;
+    tmp.insert(tmp.end(), keys.begin(), keys.begin() + num_positives);
+    tmp.insert(tmp.end(), keys.begin() + trie_size, keys.begin() + trie_size + num_negatives);
+    keys.swap(tmp);
+  }
   std::sort(trie_keys.begin(), trie_keys.end());
+  std::unordered_set<std::string> trie_key_set(trie_keys.begin(), trie_keys.end());
   printf("Done!\n");
 
   printf("Building trie...\n");
@@ -164,7 +176,7 @@ void __attribute__((noinline)) test_trie(const char *filename, uint32_t space_re
   printf("build time: %lf ms\n", (double)duration/1000000);
 
   size_t space_cost = trie.space_cost();
-  printf("space cost: %lf MB\n", (double)space_cost / mb_bits);
+  printf("space cost: %lf MB\n", (double)space_cost/mb_bits);
 
   std::shuffle(keys.begin(), keys.end(), std::mt19937{2});
   printf("Querying trie...\n");

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "include/marisa.h"
+#include "../include/utils.hpp"
 
 #include <string>
 #include <vector>
@@ -19,7 +20,7 @@ class MarisaWrapper {  // unified API
     trie_.build(keyset, max_recursion + 1);
   }
 
-  auto lookup(const std::string &key) const -> uint32_t {
+  __NOINLINE_IF_PROFILE auto lookup(const std::string &key) const -> uint32_t {
     marisa::Agent agent;
     agent.set_query(key.c_str());
     if (trie_.lookup(agent)) {

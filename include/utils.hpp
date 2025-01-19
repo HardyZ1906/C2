@@ -33,6 +33,11 @@ do { \
 #define __ALWAYS_INLINE __attribute__((always_inline))
 #define __NOINLINE __attribute__((noinline))
 #define __HOT __attribute__((hot))
+#ifdef __PROFILE__
+# define __NOINLINE_IF_PROFILE __NOINLINE  // used for profiling specific functions
+#else
+# define __NOINLINE_IF_PROFILE
+#endif
 
 ds2i::global_parameters params;
 

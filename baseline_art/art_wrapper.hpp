@@ -1,6 +1,7 @@
 #pragma once
 
 #include "include/art.hpp"
+#include "../include/utils.hpp"
 
 #include <vector>
 #include <string>
@@ -41,7 +42,7 @@ class ArtWrapper {  // unified API
     delete[] db_;
   }
 
-  auto lookup(const std::string &key) const -> uint32_t {
+  __NOINLINE_IF_PROFILE auto lookup(const std::string &key) const -> uint32_t {
     uint32_t ret = const_cast<trie_t *>(trie_)->lookup(reinterpret_cast<uint8_t *>(const_cast<char *>(key.c_str())),
                                                        key.size(), max_key_len_);
     return ret == 0 ? -1 : ret;
