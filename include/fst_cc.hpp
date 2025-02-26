@@ -53,12 +53,11 @@ class FstCC {
   }
 
   void print_space_cost_breakdown() const {
-    size_t topo_cost = topo_.size_in_bits();
-    size_t link_cost = is_link_.size_in_bits();
-    size_t label_cost = labels_.size_in_bits();
-    size_t tail_cost = next_->size_in_bits();
-    printf("topology: %lf MB, link: %lf MB, labels: %lf MB, tail: %lf MB\n", (double)topo_cost/mb_bits,
-           (double)link_cost/mb_bits, (double)label_cost/mb_bits, (double)tail_cost/mb_bits);
+    size_t topo = topo_.size_in_bits();
+    size_t link = is_link_.size_in_bits();
+    size_t data = labels_.size_in_bits();
+    next_->space_cost_breakdown(topo, link, data);
+    printf("topology: %lf MB, link: %lf MB, data: %lf MB\n", (double)topo/mb_bits, (double)link/mb_bits, (double)data/mb_bits);
   }
 
  public:
@@ -269,6 +268,8 @@ class FstCC {
     auto size_in_bits() const -> size_t override {
       return 0; // unused
     }
+
+    void space_cost_breakdown(size_t &topo, size_t &link, size_t &data) const {}  // unused
    private:
     KeySet<key_type> keys_;
 

@@ -13,6 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
+// Modified by Kepan Zhang (kzhang600@gatech.edu)
+// compute depth and node type distribution
 
 #include <queue>
 #include "louds_sux.hpp"
@@ -44,6 +46,8 @@ public:
 
     template<typename root_type>
     void build_CoCo_from_uncompacted_trie(root_type root) {
+        size_t depth = 0;
+        size_t ef = 0, pa = 0, bv = 0, de = 0, efr = 0, par = 0, bvr = 0, der = 0;
         succinct::bit_vector_builder bvb;
         size_t num_built_nodes = 0;
         std::queue<root_type> q;
@@ -65,6 +69,35 @@ public:
                     q.push(child.second);
                 }
                 node_type nt = node->node_type_vec[node->l_idx];
+
+                depth += node->l_idx;
+                switch (nt) {
+                case elias_fano:
+                    ef++;
+                    break;
+                case elias_fano_amap:
+                    efr++;
+                    break;
+                case bitvector:
+                    bv++;
+                    break;
+                case bitvector_amap:
+                    bvr++;
+                    break;
+                case packed:
+                    pa++;
+                    break;
+                case packed_amap:
+                    par++;
+                    break;
+                case all_ones:
+                    de++;
+                    break;
+                case all_ones_amap:
+                    der++;
+                    break;
+                }
+
                 std::vector<code_type> codes;
                 if (nt != all_ones and nt != all_ones_amap) {
                     codes.reserve(node->actual_CoCo_children.size());
@@ -176,6 +209,11 @@ public:
         sdsl::util::bit_compress(*pointers_to_encoding);
         internal_variable = std::make_unique<succinct::bit_vector>(&bvb);
         assert(internal_variable->size() > 0);
+
+        size_t n = num_built_nodes;
+        printf("num nodes = %ld, average depth = %lf\n", n, (double)depth/n);
+        printf("ef = %lf, pa = %lf, bv = %lf, de = %lf\n", (double)ef/n, (double)pa/n, (double)bv/n, (double)de/n);
+        printf("efr = %lf, par = %lf, bvr = %lf, der = %lf\n", (double)efr/n, (double)par/n, (double)bvr/n, (double)der/n);
     }
 
     CoCo_v2(std::istream &in) {

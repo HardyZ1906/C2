@@ -172,11 +172,13 @@ void __attribute__((noinline)) test_trie(const char *filename, uint32_t space_re
   trie_t trie(trie_keys, space_relaxation, max_recursion, mask);
   auto end = std::chrono::high_resolution_clock::now();
   auto duration = (end - start).count();
+  double build_time = (double)duration/1000000;
   printf("Done!\n");
-  printf("build time: %lf ms\n", (double)duration/1000000);
+  printf("build time: %lf ms\n", build_time);
 
   size_t space_cost = trie.space_cost();
-  printf("space cost: %lf MB\n", (double)space_cost/mb_bits);
+  double size_in_mb = (double)space_cost/mb_bits;
+  printf("space cost: %lf MB\n", size_in_mb);
 
   std::shuffle(keys.begin(), keys.end(), std::mt19937{2});
   printf("Querying trie...\n");
@@ -184,11 +186,41 @@ void __attribute__((noinline)) test_trie(const char *filename, uint32_t space_re
   query_trie<trie_t>(keys, trie, trie_key_set);
   end = std::chrono::high_resolution_clock::now();
   duration = (end - start).count();
+  double avg_latency = (double)duration/keys.size();
   printf("Done!\n");
-  printf("total time: %lf ms, avg latency: %lf ns\n", (double)duration/1000000, (double)duration/keys.size());
+  printf("total time: %lf ms, avg latency: %lf ns\n", (double)duration/1000000, avg_latency);
   trie_t::print_bench();
   trie.print_space_cost_breakdown();
+
+  printf("%lf,%lf,%lf\n", build_time, size_in_mb, avg_latency);
   printf("[PASSED]\n");
+}
+
+void test_repair(const std::string &filename, size_t trim) {
+  std::ifstream file(filename);
+  std::vector<std::string> keys;
+  std::string line;
+  while (std::getline(file, line)) {
+    keys.emplace_back(line);
+  }
+
+  size_t size_before = 0, count = 0;
+  std::vector<uint8_t> concat;
+  for (const auto &key : keys) {
+    if (key.size() > trim) {
+      size_before += key.size() - trim;
+      concat.insert(concat.end(), key.begin() + trim, key.end());
+      concat.insert(concat.end(), terminator_);
+      count++;
+    }
+  }
+  double avg_key_len = 1.*size_before / count;
+  size_before *= 8;
+  RepairStringPool<std::string> pool;
+  pool.build(concat);
+  size_t size_after = pool.size_in_bits();
+  printf("avg key length: %lf, size before: %lf MB, size after: %lf MB\n", avg_key_len,
+         (double)size_before/mb_bits, (double)size_after/mb_bits);
 }
 
 void benchmark_bv() {
@@ -281,6 +313,10 @@ int main(int argc, char *argv[]) {
    case 8:
     printf("[TEST CART]\n");
     test_trie<CArtWrapper>(argv[1], space_relaxation, max_recursion, mask, positive_percentage);
+    break;
+   case 9:
+    printf("[TEST REPAIR]\n");
+    test_repair(argv[1], space_relaxation);
     break;
    default:
     printf("unrecognized index; stopped\n");

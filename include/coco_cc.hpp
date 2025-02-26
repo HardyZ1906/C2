@@ -65,14 +65,11 @@ class CoCoCC {
   }
 
   void print_space_cost_breakdown() const {
-    size_t topo_cost = topo_.size_in_bits();
-    size_t link_cost = is_link_.size_in_bits();
-    size_t ptrs_cost = sdsl::size_in_bytes(ptrs_)*8;
-    size_t encoding_cost = macros_.size();
-    size_t tail_cost = next_->size_in_bits();
-    printf("topology: %lf MB, link: %lf MB, pointers: %lf MB, encoding: %lf MB, tail: %lf MB\n",
-           (double)topo_cost/mb_bits, (double)link_cost/mb_bits, (double)ptrs_cost/mb_bits,
-           (double)encoding_cost/mb_bits, (double)tail_cost/mb_bits);
+    size_t topo = topo_.size_in_bits();
+    size_t link = is_link_.size_in_bits() + sdsl::size_in_bytes(ptrs_) * 8;
+    size_t data = macros_.size();
+    next_->space_cost_breakdown(topo, link, data);
+    printf("topology: %lf MB, link: %lf MB, data: %lf MB\n", (double)topo/mb_bits, (double)link/mb_bits, (double)data/mb_bits);
   }
 
   CoCoCC() = default;
@@ -116,6 +113,9 @@ class CoCoCC {
   }
 
   void build(optimizer_t &opt, size_t original_size = 0, int max_recursion = 0, int mask = 0) {
+    size_t total_depth = 0;
+    size_t nef = 0, npa = 0, nbv = 0, nde = 0, nefr = 0, npar = 0, nbvr = 0, nder = 0;
+
     alphabet_ = opt.alphabet_;
     topo_.reserve(opt.states_[0].num_macros_ + opt.states_[0].num_leaves_);
     ptrs_.resize(opt.states_[0].num_macros_ + 1);
@@ -174,6 +174,33 @@ class CoCoCC {
       }
       encoding_t encoding = state.encoding_;
       uint32_t depth = state.depth_;
+
+      total_depth += depth;
+      switch (encoding) {
+      case encoding_t::ELIAS_FANO:
+        nef++;
+        break;
+      case encoding_t::EF_REMAP:
+        nefr++;
+        break;
+      case encoding_t::PACKED:
+        npa++;
+        break;
+      case encoding_t::PA_REMAP:
+        npar++;
+        break;
+      case encoding_t::BITVECTOR:
+        nbv++;
+        break;
+      case encoding_t::BV_REMAP:
+        nbvr++;
+        break;
+      case encoding_t::DENSE:
+        nde++;
+        break;
+      case encoding_t::DE_REMAP:
+        nder++;
+      }
 
       DEBUG(
         printf("macro node %d: pos = %d, depth = %d, encoding = %d, ptr = %ld, total cost = %lf\n",
@@ -258,6 +285,11 @@ class CoCoCC {
     BENCH( auto t2 = std::chrono::high_resolution_clock::now(); )
     BENCH( build_trie_time_ += (t1 - t0).count(); )
     BENCH( build_tail_time_ += (t2 - t1).count(); )
+
+    size_t n = macro_id;
+    printf("num nodes = %ld, average depth = %lf\n", n, (double)total_depth/n);
+    printf("ef = %lf, pa = %lf, bv = %lf, de = %lf\n", (double)nef/n, (double)npa/n, (double)nbv/n, (double)nde/n);
+    printf("efr = %lf, par = %lf, bvr = %lf, der = %lf\n", (double)nefr/n, (double)npar/n, (double)nbvr/n, (double)nder/n);
   }
 
   auto lookup(const key_type &key) const -> uint32_t {

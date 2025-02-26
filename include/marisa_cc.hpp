@@ -37,7 +37,7 @@ class MarisaCC : public StringPool<Key> {
   using strpool_t = StringPool<key_type>;
 
   static constexpr bool reverse_ = reverse;
-  static constexpr uint32_t link_cutoff_ = 4;  // unary paths must be at least this long to be considered for recursive compression
+  static constexpr uint32_t link_cutoff_ = 3;  // unary paths must be at least this long to be considered for recursive compression
   static_assert(link_cutoff_ >= 2);
 
 #ifdef __BENCH_MARISA__
@@ -54,12 +54,9 @@ class MarisaCC : public StringPool<Key> {
   }
 
   void print_space_cost_breakdown() const {
-    size_t topo_cost = topo_.size_in_bits();
-    size_t link_cost = sdsl::size_in_bytes(links_) * 8;
-    size_t label_cost = labels_.size_in_bits();
-    size_t tail_cost = next_->size_in_bits();
-    printf("topology: %lf MB, link: %lf MB, labels: %lf MB, tail: %lf MB\n", (double)topo_cost/mb_bits,
-           (double)link_cost/mb_bits, (double)label_cost/mb_bits, (double)tail_cost/mb_bits);
+    size_t topo = 0, link = 0, data = 0;
+    space_cost_breakdown(topo, link, data);
+    printf("topology: %lf MB, link: %lf MB, data: %lf MB\n", (double)topo/mb_bits, (double)link/mb_bits, (double)data/mb_bits);
   }
 
  private:
@@ -109,6 +106,13 @@ class MarisaCC : public StringPool<Key> {
 
   auto size_in_bits() const -> size_t override {
     return size_in_bytes() * 8;
+  }
+
+  void space_cost_breakdown(size_t &topo, size_t &link, size_t &data) const {
+    topo += topo_.size_in_bits();
+    link += sdsl::size_in_bytes(links_) * 8;
+    data += labels_.size_in_bytes() * 8;
+    next_->space_cost_breakdown(topo, link, data);
   }
 
   // returns leaf ID (-1 if not found)

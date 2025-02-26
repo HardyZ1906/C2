@@ -51,9 +51,9 @@ class StringPool {
   // stop recursion when the total size of unary paths is below this percentage of the original key set size
   static constexpr float size_percentage_cutoff_ = 2.;
   // stop recursion when the average lcp is below this value
-  static constexpr float avg_lcp_cutoff_ = 8.;
-  // use UNSORTED or SORTED if average key length is below this value
-  static constexpr float avg_key_len_cutoff_ = 8.;
+  static constexpr float avg_lcp_cutoff_ = 7.;
+  // use SORTED if `avg_lcp/key_len` is above this value
+  static constexpr float lcp_percentage_cutoff_ = 95;
 
   StringPool() = default;
 
@@ -80,14 +80,16 @@ class StringPool {
     float avg_lcp = 1.*lcp_size/sorted_rev_keys.size();
     float avg_key_len = 1.*keys.space_cost()/keys.size();
     DEBUG(
-      printf("original: %f MB, current: %f MB, sorted: %f MB, avg lcp = %f, avg key len = %f\n",
+      printf("original: %f MB, current: %f MB, sorted: %f MB, avg lcp = %f, avg key len = %f, num keys = %ld\n",
              (float)original_size*8/mb_bits, (float)keys.space_cost()*8/mb_bits,
-             (float)sorted_size*8/mb_bits, avg_lcp, avg_key_len);
+             (float)sorted_size*8/mb_bits, avg_lcp, avg_key_len, keys.size());
     )
-    if ((max_recursion > 0) && (avg_lcp > avg_lcp_cutoff_) &&
-        (keys.space_cost()*100 > original_size*size_percentage_cutoff_)) {
+    if ((max_recursion > 0)/* && (avg_lcp > avg_lcp_cutoff_) &&
+        (keys.space_cost()*100 > original_size*size_percentage_cutoff_)*/) {
       return Type::TRIE;
-    } else if ((mask & REPAIR_FLAG) && (avg_key_len > avg_key_len_cutoff_) ||
+    } else if ((mask & SORTED_FLAG) && (avg_lcp*100 > avg_key_len*lcp_percentage_cutoff_)) {
+      return Type::SORTED;
+    } else if ((mask & REPAIR_FLAG) && (keys.space_cost()*100 > original_size*size_percentage_cutoff_) ||
                !(mask & UNSORTED_FLAG) && !(mask & SORTED_FLAG)) {
       return Type::REPAIR;
     } else {
@@ -154,6 +156,8 @@ class StringPool {
   virtual auto size_in_bytes() const -> size_t = 0;
 
   virtual auto size_in_bits() const -> size_t = 0;
+
+  virtual void space_cost_breakdown(size_t &topo, size_t &link, size_t &data) const = 0;
 };
 
 
@@ -240,6 +244,11 @@ class SortedStringPool : public StringPool<Key> {
 
   auto size_in_bits() const -> size_t override {
     return size_in_bytes() * 8;
+  }
+
+  void space_cost_breakdown(size_t &topo, size_t &link, size_t &data) const {
+    link += sdsl::size_in_bytes(links_) * 8;
+    data += labels_.size() * sizeof(uint8_t) * 8;
   }
 
   static auto estimate_space_cost(const KeySet<key_type> &sorted_keys) -> size_t {
@@ -331,6 +340,11 @@ class UnsortedStringPool : public StringPool<Key> {
     return size_in_bytes() * 8;
   }
 
+  void space_cost_breakdown(size_t &topo, size_t &link, size_t &data) const {
+    link += succinct::mapper::size_of(const_cast<succinct::elias_fano &>(links_)) * 8;
+    data += labels_.size() * sizeof(uint8_t) * 8;
+  }
+
   static auto estimate_elias_fano_cost(size_t n, size_t m) -> size_t {
     constexpr uint32_t block_size = 1024, subblock_size = 32;
     int low_bits = (n >= m & m > 0) ? (64 - __builtin_clzll(n / m)) : 0;
@@ -371,7 +385,7 @@ class RepairStringPool : public StringPool<Key> {
     build(keys, partial_links);
   }
 
-  void build(std::vector<uint8_t> keys, std::vector<uint8_t> *partial_links = nullptr) {
+  void build(const std::vector<uint8_t> &keys, std::vector<uint8_t> *partial_links = nullptr) {
     if (!keys.empty()) {
       strpool_t strpool(keys);
       strpool_.swap(strpool);
@@ -439,6 +453,11 @@ class RepairStringPool : public StringPool<Key> {
 
   auto size_in_bits() const -> size_t override {
     return size_in_bytes() * 8;
+  }
+
+  void space_cost_breakdown(size_t &topo, size_t &link, size_t &data) const {
+    link += succinct::mapper::size_of(const_cast<succinct::elias_fano &>(links_)) * 8;
+    data += succinct::mapper::size_of(const_cast<strpool_t &>(strpool_)) * 8;
   }
  private:
   strpool_t strpool_;
