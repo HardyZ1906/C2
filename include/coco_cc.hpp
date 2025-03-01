@@ -459,11 +459,11 @@ class CoCoCC {
                               uint32_t num_codes, code_t target) const -> std::pair<uint32_t, code_t> {
     code_t universe = ds2i::read_delta(it);
     typename ds2i::compact_elias_fano<code_t>::enumerator enu(macros_, it.position(), universe, num_codes, params);
-    if (target >= universe) {
-      auto last = enu.move(num_codes - 1);
-      assert(last.first == num_codes - 1);
-      return {last.first, last.second};
-    }
+    // if (target >= universe) {
+    //   auto last = enu.move(num_codes - 1);
+    //   assert(last.first == num_codes - 1);
+    //   return {last.first, last.second};
+    // }
     auto result = enu.next_geq(target + 1);
     if (result.first == 0) {
       return {-1, -1};

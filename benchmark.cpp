@@ -18,7 +18,7 @@
 #include <unordered_set>
 
 
-// #define __CORRECTNESS_TEST__
+#define __CORRECTNESS_TEST__
 
 
 class FstCCWrapper {  // unified API
@@ -105,38 +105,28 @@ class MarisaCCWrapper {  // unified API
 };
 
 template <typename trie_t>
-void __attribute__((noinline)) query_trie(const std::vector<std::string> &keys, const trie_t &trie,
-                                          const std::unordered_set<std::string> &positive_queries) {
+void __attribute__((noinline)) query_trie(const std::vector<std::string> &keys, const trie_t &trie) {
 #ifdef __CORRECTNESS_TEST__
   std::unordered_set<uint32_t> key_ids;
 #endif
   for (uint32_t i = 0; i < keys.size(); i++) {
-  #ifdef __CORRECTNESS_TEST__
-    bool positive = positive_queries.count(keys[i]);
-    printf("lookup %d: %s %s\n", i, keys[i].c_str(), positive ? "(positive)" : "(negative)");
-  #endif
     volatile uint32_t key_id = trie.lookup(keys[i]);
   #ifdef __CORRECTNESS_TEST__
     uint32_t id = key_id;
     printf("id = %d\n", id);
-    if (positive) {
-      EXPECT(id != -1);
-      if constexpr (std::is_same_v<trie_t, FstCCWrapper> || std::is_same_v<trie_t, CoCoCCWrapper> ||
-                    std::is_same_v<trie_t, MarisaCCWrapper>) {  // key IDs must be in range [0, n-1] and unique
-        EXPECT(id < keys.size());
-        EXPECT(key_ids.count(id) == 0);
-        key_ids.insert(id);
-      }
-    } else {
-      EXPECT(id == -1);
+    EXPECT(id != -1);
+    if constexpr (std::is_same_v<trie_t, FstCCWrapper> || std::is_same_v<trie_t, CoCoCCWrapper> ||
+                  std::is_same_v<trie_t, MarisaCCWrapper>) {  // key IDs must be in range [0, n-1] and unique
+      EXPECT(id < keys.size());
+      EXPECT(key_ids.count(id) == 0);
+      key_ids.insert(id);
     }
   #endif
   }
 }
 
 template <typename trie_t>
-void __attribute__((noinline)) test_trie(const char *filename, uint32_t space_relaxation, int max_recursion,
-                                         int mask, uint32_t positive_percentage) {
+void __attribute__((noinline)) test_trie(const char *filename, uint32_t space_relaxation, int max_recursion, int mask) {
   printf("Processing dataset...\n");
   std::ifstream file(filename);
   std::vector<std::string> keys;
@@ -147,29 +137,11 @@ void __attribute__((noinline)) test_trie(const char *filename, uint32_t space_re
   std::sort(keys.begin(), keys.end());
   auto new_end = std::unique(keys.begin(), keys.end());
   keys.erase(new_end, keys.end());
-
-  std::shuffle(keys.begin(), keys.end(), std::mt19937{1});
-  std::vector<std::string> trie_keys;
-  if (positive_percentage == 100) {
-    trie_keys = keys;
-  } else {
-    size_t trie_size = keys.size() / 2;
-    trie_keys.insert(trie_keys.end(), keys.begin(), keys.begin() + trie_size);
-
-    size_t num_positives = positive_percentage * trie_size / 100;
-    size_t num_negatives = trie_size - num_positives;
-    std::vector<std::string> tmp;
-    tmp.insert(tmp.end(), keys.begin(), keys.begin() + num_positives);
-    tmp.insert(tmp.end(), keys.begin() + trie_size, keys.begin() + trie_size + num_negatives);
-    keys.swap(tmp);
-  }
-  std::sort(trie_keys.begin(), trie_keys.end());
-  std::unordered_set<std::string> trie_key_set(trie_keys.begin(), trie_keys.end());
   printf("Done!\n");
 
   printf("Building trie...\n");
   auto start = std::chrono::high_resolution_clock::now();
-  trie_t trie(trie_keys, space_relaxation, max_recursion, mask);
+  trie_t trie(keys, space_relaxation, max_recursion, mask);
   auto end = std::chrono::high_resolution_clock::now();
   auto duration = (end - start).count();
   double build_time = (double)duration/1000000;
@@ -183,7 +155,7 @@ void __attribute__((noinline)) test_trie(const char *filename, uint32_t space_re
   std::shuffle(keys.begin(), keys.end(), std::mt19937{2});
   printf("Querying trie...\n");
   start = std::chrono::high_resolution_clock::now();
-  query_trie<trie_t>(keys, trie, trie_key_set);
+  query_trie<trie_t>(keys, trie);
   end = std::chrono::high_resolution_clock::now();
   duration = (end - start).count();
   double avg_latency = (double)duration/keys.size();
@@ -273,46 +245,43 @@ int main(int argc, char *argv[]) {
   uint32_t space_relaxation = argc >= 4 ? std::atoi(argv[3]) : 0;
   int max_recursion = argc >= 5 ? std::atoi(argv[4]) : 0;
   int mask = argc >= 6 ? std::atoi(argv[5]) : 0;
-  uint32_t positive_percentage = argc >= 7 ? std::atoi(argv[6]) : 100;
-  positive_percentage = std::min(positive_percentage, 100u);
-  positive_percentage = std::max(positive_percentage, 10u);
 
   switch (choice) {
    case 0:
     printf("[TEST FST CC]\n");
-    test_trie<FstCCWrapper>(argv[1], space_relaxation, max_recursion, mask, positive_percentage);
+    test_trie<FstCCWrapper>(argv[1], space_relaxation, max_recursion, mask);
     break;
    case 1:
     printf("[TEST COCO CC]\n");
-    test_trie<CoCoCCWrapper>(argv[1], space_relaxation, max_recursion, mask, positive_percentage);
+    test_trie<CoCoCCWrapper>(argv[1], space_relaxation, max_recursion, mask);
     break;
    case 2:
     printf("[TEST MARISA CC]\n");
-    test_trie<MarisaCCWrapper>(argv[1], space_relaxation, max_recursion, mask, positive_percentage);
+    test_trie<MarisaCCWrapper>(argv[1], space_relaxation, max_recursion, mask);
     break;
    case 3:
     printf("[TEST FST]\n");
-    test_trie<FstWrapper>(argv[1], space_relaxation, max_recursion, mask, positive_percentage);
+    test_trie<FstWrapper>(argv[1], space_relaxation, max_recursion, mask);
     break;
    case 4:
     printf("[TEST COCO]\n");
-    test_trie<CoCoWrapper>(argv[1], space_relaxation, max_recursion, mask, positive_percentage);
+    test_trie<CoCoWrapper>(argv[1], space_relaxation, max_recursion, mask);
     break;
    case 5:
     printf("[TEST MARISA]\n");
-    test_trie<MarisaWrapper>(argv[1], space_relaxation, max_recursion, mask, positive_percentage);
+    test_trie<MarisaWrapper>(argv[1], space_relaxation, max_recursion, mask);
     break;
    case 6:
     printf("[TEST PDT]\n");
-    test_trie<PdtWrapper>(argv[1], space_relaxation, max_recursion, mask, positive_percentage);
+    test_trie<PdtWrapper>(argv[1], space_relaxation, max_recursion, mask);
     break;
    case 7:
     printf("[TEST ART]\n");
-    test_trie<ArtWrapper>(argv[1], space_relaxation, max_recursion, mask, positive_percentage);
+    test_trie<ArtWrapper>(argv[1], space_relaxation, max_recursion, mask);
     break;
    case 8:
     printf("[TEST CART]\n");
-    test_trie<CArtWrapper>(argv[1], space_relaxation, max_recursion, mask, positive_percentage);
+    test_trie<CArtWrapper>(argv[1], space_relaxation, max_recursion, mask);
     break;
    case 9:
     printf("[TEST REPAIR]\n");

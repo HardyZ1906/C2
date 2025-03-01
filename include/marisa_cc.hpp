@@ -325,6 +325,9 @@ class MarisaCC : public StringPool<Key> {
     sdsl::util::bit_compress(links_);
     BENCH( auto t1 = std::chrono::high_resolution_clock::now(); )
 
+    printf("trie size: %lf MB\n", (double)(topo_.size_in_bits() + sdsl::size_in_bytes(links_) * 8 +
+           labels_.size_in_bytes() * 8) / mb_bits);
+
     if constexpr (reverse_) {
       std::vector<uint8_t> next_partial_links;
       next_ = strpool_t::build_optimal(next_key_set, &next_partial_links, original_size, max_recursion, mask);

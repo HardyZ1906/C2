@@ -13,7 +13,7 @@
 
 class CoCoWrapper {  // unified API
  public:
-  using trie_t = CoCo_v2<1, uint128_t, MAX_L_THRS, 0>;
+  using trie_t = CoCo_v2<1, uint128_t, MAX_L_THRS, 5>;
 
   CoCoWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0,
               int max_recursion = 0, int mask = 0)

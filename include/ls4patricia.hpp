@@ -658,6 +658,10 @@ class LS4Patricia {
     bv_.build(sample);
   }
 
+  auto size() const -> uint32_t {
+    return bv_.size();
+  }
+
   auto node_start(uint32_t pos) const -> uint32_t {
     return bv_.template prev1<1>(pos);
   }
