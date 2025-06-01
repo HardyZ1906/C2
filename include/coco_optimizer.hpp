@@ -508,7 +508,7 @@ class CoCoOptimizer {
 
   uint32_t space_relaxation_{0};
 
-  template <typename K> friend class CoCoCC;
+  template <typename K, typename T> friend class CoCoCC;
 };
 
 #undef DEBUG

@@ -3,9 +3,15 @@
 #include "utils.hpp"
 
 
+#define __COMPARE_COCO__
+#ifdef __COMPARE_COCO__
+# include "louds_sux.hpp"
+#endif
+
+
 class LoudsCC {
  private:
-  static constexpr int spill_threshold_ = 128;
+  static constexpr int spill_threshold_ = 64;
   static_assert(spill_threshold_ <= 128);
 
   struct BitVector {
@@ -398,7 +404,7 @@ class LoudsCC {
 
   auto internal_id(uint32_t pos) const -> uint32_t {
     assert(pos < bv_.size());
-    return node_id(pos) - leaf_id(pos);
+    return bv_.rank0(pos) - bv_.rank00(pos);
   }
 
   auto has_parent(uint32_t pos) const -> uint32_t {
@@ -425,7 +431,7 @@ class LoudsCC {
   }
 
   // return # of children
-  auto degree(uint32_t pos) const -> uint32_t {
+  auto node_degree(uint32_t pos) const -> uint32_t {
     assert(pos == 0 || bv_.get(pos - 1) == 0);
     uint32_t next0 = bv_.next0(pos);
     return next0 - pos;
@@ -445,6 +451,10 @@ class LoudsCC {
     bv_.reserve(num_nodes*2 - 1);
   }
 
+  auto size() const -> uint32_t {
+    return bv_.size();
+  }
+
   auto size_in_bytes() const -> uint32_t {
     return bv_.size_in_bytes();
   }
@@ -456,6 +466,23 @@ class LoudsCC {
   void clear() {
     bv_.clear();
   }
+
+#ifdef __COMPARE_COCO__
+  void to_louds_sux(std::unique_ptr<LoudsSux<>> &out) {
+    out = std::make_unique<LoudsSux<>>(num_nodes());
+    uint32_t pos = 0;
+    while (pos < bv_.size()) {
+      uint32_t deg = node_degree(pos);
+      out->add_node(deg);
+      pos += deg + 1;
+    }
+    out->build();
+  }
+
+  auto get(uint32_t pos) const -> bool {
+    return bv_.get(pos);
+  }
+#endif
 
  private:
   bitvec_t bv_;

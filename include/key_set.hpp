@@ -52,6 +52,13 @@ struct KeySet {
       return length_ < rhs.length_;
     }
 
+    auto operator==(const Fragment &rhs) const -> bool {
+      if (length_ != rhs.length_) {
+        return false;
+      }
+      return !memcmp(key_->c_str() + offset_, rhs.key_->c_str() + rhs.offset_, length_);
+    }
+
     auto materialize(bool reverse = false) const -> key_type {
       key_type ret = key_->substr(offset_, length_);
       if (reverse) {
@@ -61,8 +68,14 @@ struct KeySet {
     }
 
     template <typename T>
-    void append_to(T &t, bool terminator = true) const {
-      t.insert(t.end(), key_->begin() + offset_, key_->begin() + offset_ + length_);
+    void append_to(T &t, bool terminator = true, bool reverse = false) const {
+      if (!reverse) {
+        auto begin = key_->begin() + offset_, end = key_->begin() + (offset_ + length_);
+        t.insert(t.end(), begin, end);
+      } else {
+        auto begin = key_->rbegin() + (key_->size() - offset_ - length_), end = key_->rbegin() + (key_->size() - offset_); 
+        t.insert(t.end(), begin, end);
+      }
       if (terminator) {
         t.push_back(terminator_);
       }
@@ -75,6 +88,10 @@ struct KeySet {
       } else {
         return std::make_pair(offset_ + idx, length);
       }
+    }
+
+    auto c_str() const -> const uint8_t * {
+      return key_->c_str() + offset_;
     }
   };
 
@@ -105,9 +122,12 @@ struct KeySet {
     space_cost_ += length;
   }
 
-  void push_back(const Fragment &frag) {
+  void push_back(const Fragment &frag, bool reset_id = false) {
     fragments_.push_back(frag);
     space_cost_ += frag.length_;
+    if (reset_id) {
+      fragments_.back().id_ = fragments_.size() - 1;
+    }
   }
 
   auto operator[](int idx) const -> const Fragment & {

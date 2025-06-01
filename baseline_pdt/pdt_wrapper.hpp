@@ -14,8 +14,8 @@ class PdtWrapper {  // unified API
   using trie_t = succinct::tries::path_decomposed_trie<succinct::tries::compressed_string_pool<uint16_t>>;
   // using trie_t = succinct::tries::path_decomposed_trie<succinct::tries::vbyte_string_pool>;
 
-  PdtWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0,
-             uint32_t max_recursion = 0, int mask = 0) : trie_(keys) {}
+  __NOINLINE_IF_PROFILE PdtWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0,
+                                   uint32_t max_recursion = 0, int mask = 0) : trie_(keys) {}
 
   __NOINLINE_IF_PROFILE auto lookup(const std::string &key) const -> uint32_t {
     return trie_.index(key);

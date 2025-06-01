@@ -16,6 +16,7 @@
 #include "repair.hpp"
 #include "../lib/ds2i/succinct/elias_fano.hpp"
 #include "../lib/ds2i/succinct/vbyte.hpp"
+#include "../lib/ds2i/succinct/mapper.hpp"
 
 
 template <typename K> class RepairStringPool;
@@ -87,6 +88,8 @@ namespace tries {
 
             m_byte_streams.steal(byte_streams);
             elias_fano(&positions_builder, false).swap(m_positions);
+
+            print_dictionary();
         }
 
         size_t size() const
@@ -186,6 +189,19 @@ namespace tries {
                 (m_byte_streams, "m_byte_streams")
                 (m_positions, "m_positions")
                 ;
+        }
+
+        void print_dictionary() {
+            // for (uint32_t i = 0; i + 1 < m_word_positions.size(); i++) {
+            //     auto begin = m_word_positions[i], end = m_word_positions[i + 1];
+            //     printf("key %d: ", i);
+            //     while (begin < end) {
+            //         printf("%c", m_dictionary[begin]);
+            //         begin++;
+            //     }
+            //     printf("\n");
+            // }
+            printf("dict size: %d, stream size: %d\n", succinct::mapper::size_of(m_dictionary) + succinct::mapper::size_of(m_word_positions), succinct::mapper::size_of(m_byte_streams) + succinct::mapper::size_of(m_positions));
         }
         
     protected:

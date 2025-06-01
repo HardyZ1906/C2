@@ -2,6 +2,12 @@
 
 #include "utils.hpp"
 
+#define __COMPARE_MARISA__
+#ifdef __COMPARE_MARISA__
+# include "louds_marisa.hpp"
+# include <queue>
+#endif
+
 
 // louds-sparse tree topology; used by patricia
 class LS4Patricia {
@@ -519,8 +525,8 @@ class LS4Patricia {
       return ret;
     }
 
-    // bvnum == 0: returns bv<0>.select1(bv<1>.rank1(pos + 1) - 1); used for child navigation
-    // bvnum == 1: returns bv<1>.select1(bv<0>.rank1(pos + 1) + 1); used for parent navigation
+    // bvnum == 0: returns bv<0>.select1(bv<1>.rank1(pos + 1) - 1); used for parent navigation
+    // bvnum == 1: returns bv<1>.select1(bv<0>.rank1(pos + 1) + 1); used for child navigation
     template <int bvnum>
     auto rs(uint32_t pos) const -> uint32_t {
       static_assert(bvnum == 0 || bvnum == 1);
@@ -565,6 +571,11 @@ class LS4Patricia {
       }
     }
 
+    void prefetch_block(uint32_t pos) const {
+      assert(pos < size());
+      _mm_prefetch((const char*)&blocks_[pos/256], _MM_HINT_T0);
+      _mm_prefetch((const char*)&blocks_[pos/256] + 64, _MM_HINT_T0);
+    }
    private:
     void init_select() {
       int num_blocks = capacity_ / 256;
@@ -734,6 +745,10 @@ class LS4Patricia {
     return bv_.template rank0<0>();
   }
 
+  auto num_children() const -> uint32_t {
+    return bv_.template rank1<0>();
+  }
+
   auto num_links() const -> uint32_t {
     return bv_.template rank1<2>();
   }
@@ -749,6 +764,39 @@ class LS4Patricia {
   void clear() {
     bv_.clear();
   }
+
+#ifdef __COMPARE_MARISA__
+  void to_louds_marisa(std::unique_ptr<LoudsMarisa> &out) const {
+    out = std::make_unique<LoudsMarisa>();
+    std::queue<uint32_t> queue;
+    queue.push(0);
+    while (!queue.empty()) {
+      auto pos = queue.front();
+      queue.pop();
+      if (pos == -1) {
+        out->add_node(0);
+      } else {
+        uint32_t deg = node_degree(pos);
+        out->add_node(deg);
+        for (uint32_t i = 0; i < deg; i++) {
+          if (has_child(pos + i)) {
+            queue.push(child_pos(pos + i));
+          } else {
+            queue.push(-1);
+          }
+        }
+      }
+    }
+    for (uint32_t i = 0; i < size(); i++) {
+      out->add_bit(!has_child(i), is_link(i));
+    }
+    out->build();
+  }
+
+  void prefetch_block(uint32_t pos) const {
+    bv_.prefetch_block(pos);
+  }
+#endif
 
  private:
   bitvec_t bv_;

@@ -19,7 +19,7 @@
 # define DEBUG(foo)
 #endif
 
-#define __BENCH_FST__
+// #define __BENCH_FST__
 #ifdef __BENCH_FST__
 # define BENCH(foo) foo
 #else
@@ -269,12 +269,12 @@ class FstCC {
       return 0; // unused
     }
 
-    void space_cost_breakdown(size_t &topo, size_t &link, size_t &data) const {}  // unused
+    void space_cost_breakdown(size_t &topo, size_t &link, size_t &data) const override {}  // unused
    private:
     KeySet<key_type> keys_;
 
     template <typename K> friend class FstCC;
-    template <typename K> friend class CoCoCC;
+    template <typename K, typename T> friend class CoCoCC;
   };
 
  private:
@@ -494,7 +494,7 @@ class FstCC {
 
   friend class walker;
   template <typename K> friend class CoCoOptimizer;
-  template <typename K> friend class CoCoCC;
+  template <typename K, typename T> friend class CoCoCC;
 };
 
 #ifdef __BENCH_FST__

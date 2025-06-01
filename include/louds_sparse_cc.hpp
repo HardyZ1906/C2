@@ -152,6 +152,27 @@ class LoudsSparseCC {
       }
     }
 
+    void push_back(bool has_child, bool louds) {
+      if (size_ >= capacity_) {
+        capacity_ = std::max<uint32_t>((size_ * 2 + 255) / 256 * 256, 256 * 8);
+        blocks_ = reinterpret_cast<Block *>(realloc(blocks_, sizeof(Block) * (capacity_ / 256 + 1)));
+      }
+
+      if (has_child) {
+        SET_BIT(blocks_[size_/256].bits0_[(size_%256)/64], size_ % 64);
+      } else {
+        CLEAR_BIT(blocks_[size_/256].bits0_[(size_%256)/64], size_ % 64);
+      }
+
+      if (louds) {
+        SET_BIT(blocks_[size_/256].bits1_[(size_%256)/64], size_ % 64);
+      } else {
+        CLEAR_BIT(blocks_[size_/256].bits1_[(size_%256)/64], size_ % 64);
+      }
+
+      size_++;
+    }
+
     void load_bits(const uint64_t *bits0, const uint64_t *bits1, size_t start, uint32_t size) {
       if (size_ + size > capacity_) {
         capacity_ = std::max<uint32_t>(((size_ + size) * 2 + 255) / 256 * 256, 256 * 8);
@@ -206,6 +227,8 @@ class LoudsSparseCC {
 
       // clear trailing bits
       uint32_t remainder = size_ % 256;
+      blocks_[size_/256].bits0_[remainder/64] &= MASK(remainder%64);
+      blocks_[size_/256].bits1_[remainder/64] &= MASK(remainder%64);
       for (uint32_t i = (remainder + 63) / 64; i < 4; i++) {
         blocks_[size_ / 256].bits0_[i] = 0;
         blocks_[size_ / 256].bits1_[i] = 0;
@@ -458,10 +481,18 @@ class LoudsSparseCC {
   using bitvec_t = BitVector;
 
  public:
+  void reserve(uint32_t size) {
+    bv_.reserve(size);
+  }
+
   void add_node(uint64_t has_child[4], uint32_t size) {
     assert(size <= 256);
     const uint64_t louds[4]{1};
     bv_.load_bits(has_child, louds, 0, size);
+  }
+
+  void push_back(bool has_child, bool louds) {
+    bv_.push_back(has_child, louds);
   }
 
   void build() {

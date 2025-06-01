@@ -43,6 +43,7 @@ ds2i::global_parameters params;
 
 static constexpr uint8_t terminator_ = 0;
 static constexpr int mb_bits = 1024*1024*8;
+static constexpr int mb_bytes = 1024*1024;
 
 auto usec() -> uint64_t {
   struct timeval tv;

@@ -11,13 +11,15 @@ class MarisaWrapper {  // unified API
  public:
   using trie_t = marisa::Trie;
 
-  MarisaWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0,
-                int max_recursion = 0, int mask = 0) {
+  __NOINLINE_IF_PROFILE MarisaWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0,
+                                      int max_recursion = 0, int mask = 0) {
     marisa::Keyset keyset;
     for (const auto &key : keys) {
       keyset.push_back(key.c_str());
     }
-    trie_.build(keyset, max_recursion + 1);
+    // trie_.build(keyset, (max_recursion + 1) | marisa::CacheLevel::MARISA_DEFAULT_CACHE);
+    // trie_.build(keyset, (max_recursion + 1) | marisa::CacheLevel::MARISA_LARGE_CACHE);
+    trie_.build(keyset, (max_recursion + 1) | marisa::CacheLevel::MARISA_HUGE_CACHE);
   }
 
   __NOINLINE_IF_PROFILE auto lookup(const std::string &key) const -> uint32_t {
