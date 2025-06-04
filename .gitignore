@@ -3,5 +3,4 @@
 /build
 /.vscode
 /dataset
-/lib
 /baseline_marisa/libmarisa.a

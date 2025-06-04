@@ -10,3 +10,6 @@
 [submodule "baseline_marisa/marisa"]
 	path = baseline_marisa/marisa
 	url = https://github.com/s-yata/marisa-trie.git
+[submodule "lib/fsst"]
+	path = lib/fsst
+	url = https://github.com/cwida/fsst
