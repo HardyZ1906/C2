@@ -3,9 +3,10 @@
 #pragma once
 
 #include "utils.hpp"
-// #include "../baseline_marisa/include/marisa.h"
 #include "../baseline_marisa/marisa/lib/marisa/grimoire/vector.h"
 
+
+namespace c2 {
 
 class LoudsMarisa {
  public:
@@ -74,3 +75,5 @@ class LoudsMarisa {
   bitvec_t terminal_flags_;
   bitvec_t link_flags_;
 };
+
+}  // namespace c2

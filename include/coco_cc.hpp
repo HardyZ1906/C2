@@ -19,20 +19,7 @@
 #include <type_traits>
 
 
-// #define __DEBUG_COCO__
-#ifdef __DEBUG_COCO__
-# define DEBUG(foo) foo
-#else
-# define DEBUG(foo)
-#endif
-
-// #define __BENCH_COCO__
-#ifdef __BENCH_COCO__
-# define BENCH(foo) foo
-#else
-# define BENCH(foo)
-#endif
-
+namespace c2 {
 
 template <typename Key, typename Topology = LoudsCC>
 class CoCoCC {
@@ -51,22 +38,6 @@ class CoCoCC {
   static constexpr uint8_t depth_bits_ = optimizer_t::depth_bits_;
   static constexpr uint32_t degree_threshold_ = optimizer_t::degree_threshold_;
   static constexpr uint32_t bv_block_sz_ = optimizer_t::bv_block_sz_;
-
-#ifdef __BENCH_COCO__
-  static uint64_t build_fst_time_;
-  static uint64_t optimize_time_;
-  static uint64_t build_trie_time_;
-  static uint64_t build_tail_time_;
-#endif
-  static void print_bench() {
-  #ifdef __BENCH_COCO__
-    printf("build FST: %lf ms, optimize: %lf ms, build trie: %lf ms, build tail: %lf ms\n",
-           (double)build_fst_time_/1000000, (double)optimize_time_/1000000,
-           (double)build_trie_time_/1000000, (double)build_tail_time_/1000000);
-  #else
-    printf("disabled\n");
-  #endif
-  }
 
   void print_space_cost_breakdown() const {
     size_t topo = topo_.size_in_bits();
@@ -104,19 +75,14 @@ class CoCoCC {
       key_set.sort();
     }
 
-    BENCH( auto t0 = std::chrono::high_resolution_clock::now(); )
     typename optimizer_t::trie_t trie;
     trie.build(key_set, true, max_recursion);
-    BENCH( auto t1 = std::chrono::high_resolution_clock::now(); )
     optimizer_t opt(&trie);
     opt.optimize(space_relaxation);
-    BENCH( auto t2 = std::chrono::high_resolution_clock::now(); )
-    build(opt, key_set.space_cost(), max_recursion, mask);
-    BENCH( build_fst_time_ += (t1 - t0).count(); )
-    BENCH( optimize_time_ += (t2 - t1).count(); )
+    build(opt, max_recursion, mask);
   }
 
-  void build(optimizer_t &opt, size_t original_size = 0, int max_recursion = 0, int mask = 0) {
+  void build(optimizer_t &opt, int max_recursion = 0, int mask = 0) {
     size_t total_depth = 0;
     size_t nef = 0, npa = 0, nbv = 0, nde = 0, nefr = 0, npar = 0, nbvr = 0, nder = 0;
 
@@ -147,11 +113,9 @@ class CoCoCC {
           auto leaf_id = opt.trie_->topo_.leaf_id(pos);
           if (!opt.trie_->is_link_.get(leaf_id)) {
             is_link_.append0();
-            DEBUG( printf("regular leaf node\n"); )
           } else {
             suffixes.push_back(old_suffixes[opt.trie_->is_link_.rank1(leaf_id)], true);
             is_link_.append1();
-            DEBUG( printf("link leaf node\n"); )
           }
         }
       } else {
@@ -168,7 +132,6 @@ class CoCoCC {
       }
     };
 
-    BENCH( auto t0 = std::chrono::high_resolution_clock::now(); )
     push_to_queue(0, -1);
     uint32_t macro_id = 0;
     while (!queue.empty()) {
@@ -176,14 +139,11 @@ class CoCoCC {
       queue.pop();
       if constexpr (!std::is_same_v<topo_t, LoudsSparseCC>) {
         if (pos == -1) {  // leaf node
-          // DEBUG( printf("leaf node\n"); )
           topo_.add_node(0);
           if (link_id != -1) {
-            DEBUG( printf("link leaf node, %d: %s\n", link_id, old_suffixes[link_id].materialize().c_str()); )
             suffixes.push_back(old_suffixes[link_id], true);
             is_link_.append1();
           } else {
-            DEBUG( printf("regular leaf node\n"); )
             is_link_.append0();
           }
           continue;
@@ -201,7 +161,6 @@ class CoCoCC {
         if constexpr (std::is_same_v<topo_t, LoudsSparseCC>) {
           topo_.push_back(false, true);
           is_link_.append0();
-          DEBUG( printf("prefix key, add node (%d, %d)\n", false, true); )
         } else {
           push_to_queue(-1, -1);
         }
@@ -236,15 +195,6 @@ class CoCoCC {
         nder++;
       }
 
-      DEBUG(
-        printf("macro node %d: topo size = %d, pos = %d, depth = %d, encoding = %d, ptr = %ld, total cost = %lf\n",
-               macro_id - 1, topo_.size(), pos, depth, encoding, bv.size(), state.enc_cost_);
-        uint32_t key_idx = 0;
-        if (prefix_key) {
-          printf("key %d: (null)\n", key_idx++);
-        }
-      )
-
       // traverse and encode all keys
       typename optimizer_t::trie_t::walker walker(opt.trie_, pos);
       walker.get_min_key(depth);
@@ -252,21 +202,17 @@ class CoCoCC {
       if constexpr (std::is_same_v<topo_t, LoudsSparseCC>) {
         bool has_child = opt.trie_->topo_.has_child(walker.pos_), louds = !prefix_key;
         topo_.push_back(has_child, louds);
-        DEBUG( printf("add node (%d, %d)\n", has_child, louds); )
       }
 
       code_t first_code;
       std::vector<code_t> codes;
       if (!(static_cast<int>(encoding) & 0x4)) {  // no remap
-        DEBUG( printf("key %d: %s\n", key_idx++, walker.key().c_str()); )
         first_code = encode(walker.key(), 0, depth);
         while (walker.next(depth)) {
-          DEBUG( printf("key %d: %s\n", key_idx++, walker.key().c_str()); )
           push_child(walker.pos_);
           if constexpr (std::is_same_v<topo_t, LoudsSparseCC>) {
             bool has_child = opt.trie_->topo_.has_child(walker.pos_);
             topo_.push_back(has_child, false);
-            DEBUG( printf("add node (%d, %d)\n", has_child, false); )
           }
           code_t code = encode(walker.key(), 0, depth);
           codes.emplace_back(code - first_code - 1);
@@ -277,15 +223,12 @@ class CoCoCC {
         uint32_t width = optimizer_t::code_len(alphabet_, depth);
         bv.append_bits(first_code, width);
       } else {  // remap
-        DEBUG( printf("key %d: %s\n", key_idx++, walker.key().c_str()); )
         first_code = encode(walker.key(), 0, depth, state.remap_);
         while (walker.next(depth)) {
-          DEBUG( printf("key %d: %s\n", key_idx++, walker.key().c_str()); )
           push_child(walker.pos_);
           if constexpr (std::is_same_v<topo_t, LoudsSparseCC>) {
             bool has_child = opt.trie_->topo_.has_child(walker.pos_);
             topo_.push_back(has_child, false);
-            DEBUG( printf("add node (%d, %d)\n", has_child, false); )
           }
           code_t code = encode(walker.key(), 0, depth, state.remap_);
           codes.emplace_back(code - first_code - 1);
@@ -328,25 +271,12 @@ class CoCoCC {
       }
     }
     ptrs_[macro_id] = bv.size();  // sentinel
-    DEBUG( printf("final encoding cost: %ld\n", bv.size()); )
     topo_.build();
     is_link_.build();
-    if constexpr (std::is_same_v<topo_t, LoudsSparseCC>) {
-      DEBUG( printf("bv size: %d, num nodes: %d, num children: %d\n", topo_.size(), topo_.num_nodes(), topo_.num_children()); )
-    }
     sdsl::util::bit_compress(ptrs_);
     new (&macros_) succinct::bit_vector(&bv);
-    BENCH( auto t1 = std::chrono::high_resolution_clock::now(); )
 
-    next_ = strpool_t::build_optimal(suffixes, nullptr, original_size, max_recursion, mask);
-    BENCH( auto t2 = std::chrono::high_resolution_clock::now(); )
-    BENCH( build_trie_time_ += (t1 - t0).count(); )
-    BENCH( build_tail_time_ += (t2 - t1).count(); )
-
-    size_t n = macro_id;
-    printf("num nodes = %ld, average depth = %lf\n", n, (double)total_depth/n);
-    printf("ef = %lf, pa = %lf, bv = %lf, de = %lf\n", (double)nef/n, (double)npa/n, (double)nbv/n, (double)nde/n);
-    printf("efr = %lf, par = %lf, bvr = %lf, der = %lf\n", (double)nefr/n, (double)npar/n, (double)nbvr/n, (double)nder/n);
+    next_ = strpool_t::build_optimal(suffixes, nullptr, trie_size_in_bits(), max_recursion, mask);
   }
 
   auto lookup(const key_type &key) const -> uint32_t {
@@ -384,7 +314,6 @@ class CoCoCC {
       }
       uint32_t depth = it.take(depth_bits_) + 1;
       if (!is_legal(key, matched_len, depth)) {  // contains illegal label
-        DEBUG( printf("illegal label\n"); )
         return -1;
       }
     #ifdef __DEGREE_IN_PLACE__
@@ -408,7 +337,6 @@ class CoCoCC {
       code_t lower_bound;
       // compare against first code
       if (code < first_code) {
-        DEBUG( printf("< first code\n"); )
         return -1;
       } else if (code == first_code) {
         child_id = prefix_key;
@@ -439,15 +367,10 @@ class CoCoCC {
         lower_bound = lb.second + 1 + first_code;
       }
       assert(child_id < degree);
-      DEBUG(
-        printf("key: %s, code = %ld, pos %d, macro node %d, child %d, encoding = %d, depth = %d, degree = %d, prefix key = %d\n",
-               key.substr(matched_len, depth).c_str(), code, pos + child_id, macro_id, child_id, encoding, depth, degree, prefix_key);
-      )
 
       if constexpr (std::is_same_v<topo_t, LoudsSparseCC>) {
         if (topo_.has_child(pos + child_id)) {
           if (code != lower_bound) {
-            printf("macro node mismatch\n");
             return -1;
           }
           matched_len += depth;  // must be full match
@@ -464,7 +387,6 @@ class CoCoCC {
 
         if (!topo_.is_leaf(pos)) {
           if (code != lower_bound) {
-            printf("macro node mismatch\n");
             return -1;
           }
           matched_len += depth;  // must be full match
@@ -477,19 +399,16 @@ class CoCoCC {
       // reaching leaf node
       uint32_t prefix_len = is_prefix(lower_bound, code, depth, is_remap ? remap : alphabet_);
       if (prefix_len == -1) {
-        DEBUG( printf("leaf node mismatch\n"); )
         return -1;
       }
       matched_len += prefix_len;
 
       uint32_t leaf_id = topo_.leaf_id(pos);
       if (!is_link_.get(leaf_id) && matched_len != key.size()) {  // unmatched suffixes
-        DEBUG( printf("unmatched suffixes\n"); )
         return -1;
       }
       if (is_link_.get(leaf_id) &&
-          next_->match(key, matched_len, is_link_.rank1(leaf_id)) != key.size() - matched_len) {  // suffix mismatch
-        DEBUG( printf("suffix mismatch\n"); )          
+          next_->match(key, matched_len, is_link_.rank1(leaf_id)) != key.size() - matched_len) {  // suffix mismatch        
         return -1;
       }
       return leaf_id;
@@ -502,6 +421,10 @@ class CoCoCC {
 
   auto size_in_bits() const -> size_t {
     return topo_.size_in_bits() + sdsl::size_in_bytes(ptrs_)*8 + macros_.size() + next_->size_in_bits() + is_link_.size_in_bits();
+  }
+
+  auto trie_size_in_bits() const -> size_t {
+    return topo_.size_in_bits() + sdsl::size_in_bytes(ptrs_)*8 + macros_.size() + is_link_.size_in_bits();
   }
 
   auto get_num_nodes() const -> std::pair<uint32_t, uint32_t> {
@@ -818,12 +741,4 @@ class CoCoCC {
   uint32_t root_degree_{0};
 };
 
-#ifdef __BENCH_COCO__
-template <typename K, typename T> uint64_t CoCoCC<K, T>::build_fst_time_ = 0;
-template <typename K, typename T> uint64_t CoCoCC<K, T>::optimize_time_ = 0;
-template <typename K, typename T> uint64_t CoCoCC<K, T>::build_trie_time_ = 0;
-template <typename K, typename T> uint64_t CoCoCC<K, T>::build_tail_time_ = 0;
-#endif
-
-#undef DEBUG
-#undef BENCH
+}  // namespace c2

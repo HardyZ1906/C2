@@ -10,15 +10,7 @@
 #include <vector>
 
 
-#define __TEST_RECURSION__
-
-#define __DEBUG_STRPOOL__
-#ifdef __DEBUG_STRPOOL__
-# define DEBUG(foo) foo
-#else
-# define DEBUG(foo)
-#endif
-
+namespace c2 {
 
 template <typename Key, bool reverse>
 class MarisaCC;
@@ -28,9 +20,6 @@ class FsstStringPool;
 
 template <typename Key>
 class SortedStringPool;
-
-template <typename Key>
-class UnsortedStringPool;
 
 template <typename Key>
 class RepairStringPool;
@@ -52,103 +41,85 @@ class StringPool {
   static constexpr int REPAIR_FLAG   = BIT(static_cast<int>(Type::REPAIR));
   static constexpr int FSST_FLAG     = BIT(static_cast<int>(Type::FSST));
 
-  // stop recursion when the total size of unary paths is below this percentage of the original key set size
-  static constexpr float size_percentage_cutoff_ = 2.;
-  // stop recursion when the average lcp is below this value
-  static constexpr float avg_lcp_cutoff_ = 7.;
-  // use SORTED if `avg_lcp/key_len` is above this value
-  static constexpr float lcp_percentage_cutoff_ = 95;
+  // sample size used for estimation
+  static constexpr size_t sample_size_ = (1 << 22);  // 4MB
+  // recurse only if improvement is above this threshold
+  static constexpr size_t recurse_threshold_ = 10;
 
   StringPool() = default;
 
   virtual ~StringPool() = default;
 
-  // mask: which tail string pools are enabled? 0 means everything is enabled
-  static auto get_optimal_type(const KeySet<key_type> &keys, const KeySet<key_type> &sorted_rev_keys,
-                               size_t original_size, int max_recursion, int mask) -> Type {
-  #ifdef __TEST_RECURSION__
-    if (max_recursion > 0) {
-      return Type::TRIE;
-    } else if (mask & SORTED_FLAG) {
-      return Type::SORTED;
+ private:
+  static auto build_tail(const KeySet<key_type> &keys, const KeySet<key_type> &sorted_rev_keys,
+                         std::vector<uint8_t> *partial_links, int mask) -> StringPool * {
+    StringPool *ret;
+    if (mask & FSST_FLAG) {
+      ret = new fsst_t();
+      ret->build(sorted_rev_keys, partial_links);
     } else if (mask & REPAIR_FLAG) {
-      return Type::REPAIR;
+      ret = new repair_t();
+      ret->build(keys, partial_links);
     } else {
-      return Type::FSST;
+      ret = new sorted_t();
+      ret->build(sorted_rev_keys, partial_links);
     }
-  #else
-    if ((mask & MASK(3)) == 0) {
-      mask = MASK(3);
-    }
-    auto [lcp_size, sorted_size] = sorted_rev_keys.lcp_size();
-    float avg_lcp = 1.*lcp_size/sorted_rev_keys.size();
-    float avg_key_len = 1.*keys.space_cost()/keys.size();
-    DEBUG(
-      printf("original: %f MB, current: %f MB, sorted: %f MB, avg lcp = %f, avg key len = %f, num keys = %ld\n",
-             (float)original_size*8/mb_bits, (float)keys.space_cost()*8/mb_bits,
-             (float)sorted_size*8/mb_bits, avg_lcp, avg_key_len, keys.size());
-    )
-    if ((max_recursion > 0)/* && (avg_lcp > avg_lcp_cutoff_) &&
-        (keys.space_cost()*100 > original_size*size_percentage_cutoff_)*/) {
-      return Type::TRIE;
-    } else if ((mask & SORTED_FLAG) && (avg_lcp*100 > avg_key_len*lcp_percentage_cutoff_)) {
-      return Type::SORTED;
-    } else if ((mask & REPAIR_FLAG) && (keys.space_cost()*100 > original_size*size_percentage_cutoff_) ||
-               !(mask & UNSORTED_FLAG) && !(mask & SORTED_FLAG)) {
-      return Type::REPAIR;
-    } else {
-      size_t unsorted_cost = (mask & UNSORTED_FLAG) ? unsorted_t::estimate_space_cost(keys) : std::numeric_limits<uint64_t>::max();
-      size_t sorted_cost = (mask & SORTED_FLAG) ? sorted_t::estimate_space_cost(sorted_size, keys.size()) :
-                           std::numeric_limits<uint64_t>::max();
-      DEBUG( printf("unsorted: %f MB, sorted: %f MB\n", (float)unsorted_cost/mb_bits, (float)sorted_cost/mb_bits); )
-      return sorted_cost <= unsorted_cost ? Type::SORTED : Type::UNSORTED;
-    }
-  #endif
+    return ret;
   }
 
-  static auto build_optimal(const KeySet<key_type> &keys, std::vector<uint8_t> *partial_links = nullptr,
-                            size_t original_size = 0, int max_recursion = 0, int mask = 0) -> StringPool * {
-    auto sorted_rev_keys = keys;
-    sorted_rev_keys.reverse();
-    sorted_rev_keys.sort();
-
-    auto optimal_type = get_optimal_type(keys, sorted_rev_keys, original_size, max_recursion, mask);
-    StringPool *ret;
-    switch (optimal_type) {
-     case Type::SORTED:
-      DEBUG( printf("max recursion = %d, type = SORTED\n", max_recursion); )
-      ret = new sorted_t();
-      ret->build(sorted_rev_keys, partial_links, original_size, max_recursion - 1, mask);
-      DEBUG( printf("max recursion = %d, type = SORTED, cost = %f MB\n",
-                    max_recursion, (float)ret->size_in_bits()/mb_bits); )
-      return ret;
-     case Type::TRIE:
-      assert(max_recursion > 0);
-      DEBUG( printf("max recursion = %d, type = TRIE\n", max_recursion); )
-      ret = new trie_t();
-      ret->build(sorted_rev_keys, partial_links, original_size, max_recursion - 1, mask);
-      DEBUG( printf("max recursion = %d, type = TRIE, cost = %f MB\n",
-                    max_recursion, (float)ret->size_in_bits()/mb_bits); )
-      return ret;
-     case Type::REPAIR:
-      DEBUG( printf("max recursion = %d, type = REPAIR\n", max_recursion); )
-      ret = new repair_t();
-      ret->build(keys, partial_links, original_size, max_recursion - 1, mask);
-      DEBUG( printf("max recursion = %d, type = REPAIR, cost = %f MB\n",
-                    max_recursion, (float)ret->size_in_bits()/mb_bits); )
-      return ret;
-     case Type::FSST:
-      DEBUG( printf("max recursion = %d, type = FSST\n", max_recursion); )
-      ret = new fsst_t();
-      ret->build(sorted_rev_keys, partial_links, original_size, max_recursion - 1, mask);
-      DEBUG( printf("max recursion = %d, type = FSST, cost = %f MB\n",
-                    max_recursion, (float)ret->size_in_bits()/mb_bits); )
-      return ret;
+  static auto build_recursive(const KeySet<key_type> &keys, const KeySet<key_type> &sorted_rev_keys,
+                              std::vector<uint8_t> *partial_links, size_t total_trie_size, size_t prev_tail_estimate,
+                              int max_recursion, int mask) -> StringPool * {
+    if (max_recursion == 0) {
+      return build_tail(keys, sorted_rev_keys, partial_links, mask);
     }
+
+    KeySet<key_type> next_keys;
+    auto next_trie = new MarisaCC<key_type, true>();
+    next_trie->build_current_trie(sorted_rev_keys, next_keys, partial_links);
+    auto sorted_rev_next_keys = next_keys;
+    sorted_rev_next_keys.set_reverse(true);
+    sorted_rev_next_keys.sort();
+    size_t tail_estimate = (mask & FSST_FLAG) ? fsst_t::estimate_space_cost(next_keys, false) :
+                           (mask & REPAIR_FLAG) ? repair_t::estimate_space_cost(next_keys, false) :
+                           sorted_t::estimate_space_cost(sorted_rev_next_keys, false);
+    size_t trie_size = next_trie->trie_size_in_bits();
+    size_t prev_estimate = total_trie_size + prev_tail_estimate;
+    size_t cur_estimate = total_trie_size + trie_size + tail_estimate;
+    if ((100 + recurse_threshold_)*cur_estimate >= 100*prev_estimate) {
+      delete next_trie;
+      return build_tail(keys, sorted_rev_keys, partial_links, mask);
+    }
+
+    std::vector<uint8_t> next_partial_links;
+    next_trie->next_ = build_recursive(next_keys, sorted_rev_next_keys, &next_partial_links, total_trie_size +
+                                       next_trie->size_in_bits(), tail_estimate, max_recursion - 1, mask);
+    uint32_t pos = -1;
+    for (auto partial_link : next_partial_links) {
+      pos = next_trie->topo_.next_link(pos + 1);
+      next_trie->labels_[pos] = partial_link;
+    }
+    return next_trie;
+  }
+
+ public:
+  static auto build_optimal(const KeySet<key_type> &keys, std::vector<uint8_t> *partial_links = nullptr,
+                            size_t first_trie_size = 0, int max_recursion = 0, int mask = 0) -> StringPool * {
+    if (mask == 0) {
+      mask = FSST_FLAG;
+    }
+    StringPool *ret;
+    auto sorted_rev_keys = keys;
+    sorted_rev_keys.set_reverse(true);
+    sorted_rev_keys.sort();
+    size_t tail_estimate = (mask & FSST_FLAG) ? fsst_t::estimate_space_cost(keys, false) :
+                           (mask & REPAIR_FLAG) ? repair_t::estimate_space_cost(keys, false) :
+                           sorted_t::estimate_space_cost(sorted_rev_keys, false);
+    return build_recursive(keys, sorted_rev_keys, partial_links, first_trie_size, tail_estimate, max_recursion, mask);
   }
 
   virtual void build(const KeySet<key_type> &keys, std::vector<uint8_t> *partial_links = nullptr,
-                     size_t original_size = 0, int max_recursion = 0, int mask = 0) = 0;
+                     int max_recursion = 0, int mask = 0) = 0;
 
   virtual auto match(const key_type &key, uint32_t begin, uint32_t key_id) const -> uint32_t = 0;
 
@@ -176,7 +147,7 @@ class SortedStringPool : public StringPool<Key> {
 
   // partial link: 8 low bits of the actual link
   void build(const KeySet<key_type> &sorted_rev_keys, std::vector<uint8_t> *partial_links = nullptr,
-             size_t original_size = 0, int max_recursion = 0, int mask = 0) override {
+             int max_recursion = 0, int mask = 0) override {
     links_.resize(sorted_rev_keys.size());
     if (partial_links != nullptr) {
       partial_links->resize(sorted_rev_keys.size());
@@ -213,7 +184,6 @@ class SortedStringPool : public StringPool<Key> {
     }
     sdsl::util::bit_compress(links_);
     labels_.shrink_to_fit();
-    DEBUG( printf("compression ratio: %lf\n", (double)sorted_rev_keys.space_cost()/size_in_bytes()); )
   }
 
   auto match(const key_type &key, uint32_t begin, uint32_t key_id) const -> uint32_t override {
@@ -256,13 +226,18 @@ class SortedStringPool : public StringPool<Key> {
     data += labels_.size() * sizeof(uint8_t) * 8;
   }
 
-  static auto estimate_space_cost(const KeySet<key_type> &sorted_keys) -> size_t {
-    auto [lcp_size, sorted_size] = sorted_keys.lcp_size();
-    return estimate_space_cost(sorted_size, sorted_keys.size());
+  static auto estimate_space_cost(const KeySet<key_type> &sorted_rev_keys, bool partial_links = false) -> size_t {
+    auto [lcp_size, sorted_size] = sorted_rev_keys.lcp_size();
+    return estimate_space_cost(sorted_size, sorted_rev_keys.size(), partial_links);
   }
 
-  static auto estimate_space_cost(size_t sorted_size, size_t num_keys) -> size_t {
-    return sorted_size * 8 + (64 - __builtin_clzll(sorted_size)) * num_keys;
+  static auto estimate_space_cost(size_t sorted_size, size_t num_keys, bool partial_links = false) -> size_t {
+    if (sorted_size == 0) {
+      return 0;
+    }
+    int link_width = partial_links ? std::max(56 - __builtin_clzll(sorted_size), 1) :
+                     std::max(64 - __builtin_clzll(sorted_size), 1);
+    return sorted_size * 8 + link_width * num_keys;
   }
  private:
   std::vector<uint8_t> labels_;
@@ -281,15 +256,12 @@ class RepairStringPool : public StringPool<Key> {
 
   // partial links: (4 low bits of this link) | (4 low bits of next link)
   void build(const KeySet<key_type> &key_set, std::vector<uint8_t> *partial_links = nullptr,
-             size_t original_size = 0, int max_recursion = 0, int mask = 0) override {
+             int max_recursion = 0, int mask = 0) override {
     std::vector<uint8_t> keys;
     for (const auto &frag : key_set.fragments_) {
       frag.append_to(keys);
     }
     build(keys, partial_links);
-    DEBUG( printf("compression ratio: %lf\n", (double)key_set.space_cost()/size_in_bytes()); )
-    DEBUG( printf("links: %lf MB, data: %lf MB\n", (double)succinct::mapper::size_of(links_)/mb_bytes,
-                  (double)succinct::mapper::size_of(strpool_)/mb_bytes); )
   }
 
   void build(const std::vector<uint8_t> &keys, std::vector<uint8_t> *partial_links = nullptr) {
@@ -366,6 +338,18 @@ class RepairStringPool : public StringPool<Key> {
     link += succinct::mapper::size_of(const_cast<succinct::elias_fano &>(links_)) * 8;
     data += succinct::mapper::size_of(const_cast<strpool_t &>(strpool_)) * 8;
   }
+
+  static auto estimate_space_cost(const KeySet<key_type> &keys, bool partial_links = false) -> size_t {
+    auto sample = keys.make_sample(StringPool<key_type>::sample_size_, false);
+    RepairStringPool<key_type> temp;
+    if (partial_links) {
+      std::vector<uint8_t> links;
+      temp.build(sample, &links);
+    } else {
+      temp.build(sample);
+    }
+    return keys.space_cost() * 8 * temp.size_in_bits() / (sample.space_cost() * 8);
+  }
  private:
   strpool_t strpool_;
   succinct::elias_fano links_;
@@ -381,8 +365,7 @@ class FsstStringPool : public StringPool<Key> {
   ~FsstStringPool() = default;
 
   void build(const KeySet<key_type> &sorted_rev_keys, std::vector<uint8_t> *partial_links = nullptr,
-             size_t original_size = 0, int max_recursion = 0, int mask = 0) override {
-    auto t0 = std::chrono::high_resolution_clock::now();
+             int max_recursion = 0, int mask = 0) override {
     links_.resize(sorted_rev_keys.size());
     if (partial_links != nullptr) {
       partial_links->resize(sorted_rev_keys.size());
@@ -412,17 +395,13 @@ class FsstStringPool : public StringPool<Key> {
       next = &cur;
     }
 
-    auto t1 = std::chrono::high_resolution_clock::now();
-    // TODO: compress a small subset to estimate the compression ratio
     auto encoder = fsst_create(in_str.size(), in_len.data(), in_str.data(), true);
-    auto t2 = std::chrono::high_resolution_clock::now();
     codes_.resize(in_buf.size() * 2 + 16);
     out_str.resize(in_str.size());
     out_len.resize(in_str.size());
     fsst_compress(encoder, in_str.size(), in_len.data(), in_str.data(), codes_.size(), codes_.data(), out_len.data(), out_str.data());
-    auto t3 = std::chrono::high_resolution_clock::now();
     size_t compressed_len = (in_str.size() == 0) ? 0 : (out_str[in_str.size() - 1]  + out_len[in_str.size() - 1] - codes_.data());
-    codes_.resize(compressed_len);
+    codes_.resize(compressed_len + 8);
 
     for (uint32_t i = 0; i < sorted_rev_keys.size(); i++) {
       auto id = sorted_rev_keys[i].id_;
@@ -442,15 +421,6 @@ class FsstStringPool : public StringPool<Key> {
     fsst_export(encoder, buf);
     fsst_destroy(encoder);
     fsst_import(&decoder_, buf);
-    auto t4 = std::chrono::high_resolution_clock::now();
-
-    DEBUG( printf("original size: %lf MB, compressed size: %lf MB, compression ratio: %lf\n",
-                  (double)sorted_rev_keys.space_cost()/mb_bytes, (double)size_in_bytes()/mb_bytes,
-                  (double)sorted_rev_keys.space_cost()/size_in_bytes()); )
-    DEBUG( printf("total time: %lf ms, create symbol table: %lf ms, compress: %lf ms\n",
-                  (double)(t4 - t0).count()/1000000, (double)(t2 - t1).count()/1000000, (double)(t3 - t2).count()/1000000); )
-    DEBUG( printf("links: %lf MB, data: %lf MB\n", (double)(sizeof(fsst_decoder_t) + sdsl::size_in_bytes(links_))/mb_bytes,
-                  (double)codes_.size()*sizeof(uint8_t)/mb_bytes); )
   }
 
   auto match(const key_type &key, uint32_t begin, uint32_t key_id) const -> uint32_t override {
@@ -472,11 +442,14 @@ class FsstStringPool : public StringPool<Key> {
     size_t out_size, end = link + strlen(reinterpret_cast<const char *>(codes_.data() + link));  // zero terminated
     uint32_t pos = begin;
     while (end - link > FSSTSTRPOOL_BATCH_SIZE) {
-      out_size = fsst_decompress(&decoder_, FSSTSTRPOOL_BATCH_SIZE, codes_.data() + link, FSSTSTRPOOL_BUFFER_SIZE, out_buf);
+      // make sure FSST_ESC is not the last code
+      uint32_t decode_size = FSSTSTRPOOL_BATCH_SIZE - (codes_[link + FSSTSTRPOOL_BATCH_SIZE - 1] == FSST_ESC);
+      out_size = fsst_decompress(&decoder_, decode_size, codes_.data() + link, FSSTSTRPOOL_BUFFER_SIZE, out_buf);
+      if (out_buf[out_size - 1] == FSST_ESC)
       if (memcmp(key.c_str() + pos, out_buf, out_size)) {
         return -1;
       }
-      link += FSSTSTRPOOL_BATCH_SIZE;
+      link += decode_size;
       pos += out_size;
     }
     if (end > link) {
@@ -507,11 +480,22 @@ class FsstStringPool : public StringPool<Key> {
     link += (sdsl::size_in_bytes(links_) + sizeof(fsst_decoder_t)) * 8;
     data += codes_.size() * sizeof(uint8_t) * 8;
   }
+
+  static auto estimate_space_cost(const KeySet<key_type> &keys, bool partial_links = false) {
+    auto sample = keys.make_sample(StringPool<key_type>::sample_size_, true);
+    FsstStringPool<key_type> temp;
+    if (partial_links) {
+      std::vector<uint8_t> links;
+      temp.build(sample, &links);
+    } else {
+      temp.build(sample);
+    }
+    return keys.space_cost() * 8 * temp.size_in_bits() / (sample.space_cost() * 8);
+  }
  private:
   sdsl::int_vector<> links_;
   std::vector<uint8_t> codes_;
   fsst_decoder_t decoder_;
 };
 
-
-#undef DEBUG
+}  // namespace c2

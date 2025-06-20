@@ -9,6 +9,8 @@
 #endif
 
 
+namespace c2 {
+
 // louds-sparse tree topology; used by patricia
 class LS4Patricia {
  private:
@@ -801,3 +803,5 @@ class LS4Patricia {
  private:
   bitvec_t bv_;
 };
+
+}  // namespace c2

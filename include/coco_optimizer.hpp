@@ -11,16 +11,11 @@
 #include <unordered_set>
 #include <vector>
 
-// #define __DEBUG_OPTIMIZER__
-#ifdef __DEBUG_OPTIMIZER__
-# define DEBUG(foo) foo
-#else
-# define DEBUG(foo)
-#endif
-
 // #define __DEGREE_IN_PLACE__  // allow storing degree in place for large macro nodes?
 #define __ESTIMATE_CODE_LEN__  // estimate or exact compute the length of first code?
 
+
+namespace c2 {
 
 template <typename Key>
 class CoCoOptimizer {
@@ -74,10 +69,8 @@ class CoCoOptimizer {
     // bottom-up optimization
     for (size_t i = levels.size() - 1; i > 0; i--) {
       uint32_t pos = levels[i-1];
-      DEBUG( printf("optimize level %d(%d:%d)\n", i - 1, levels[i-1], levels[i]); )
       uint32_t count = 0;
       while (pos < levels[i]) {  // optimize level
-        // DEBUG( printf("optimize node %d\n", pos); )
         optimize_node(pos);
         pos = trie_->topo_.node_end(pos);
         count++;
@@ -93,39 +86,6 @@ class CoCoOptimizer {
     return {states_[0].num_macros_, states_[0].num_leaves_};
   }
 
-#ifdef __DEBUG_OPTIMIZER__
-  void print_optimal() {
-    std::queue<uint32_t> queue;
-    queue.push(0);
-    uint32_t macro_node_id = 0;
-    while (!queue.empty()) {
-      uint32_t pos = queue.front();
-      queue.pop();
-      uint32_t node_id = trie_->node_id(pos);
-      state_t &state = states_[node_id];
-      printf("macro node %d: encoding = %d, depth = %d, cost = %f\n", macro_node_id, state.encoding_,
-             state.depth_, space_cost_total(state));
-      macro_node_id++;
-      typename trie_t::walker left_walker(trie_, pos), right_walker(trie_, pos);
-      right_walker.move_to_back();
-      for (uint32_t i = 1; i < state.depth_; i++) {
-        bool ok = left_walker.move_down_one_level_left();
-        assert(ok);
-        ok = right_walker.move_down_one_level_right();
-        assert(ok);
-      }
-      // printf("%d %d\n", left_walker.pos_, right_walker.pos_);
-      pos = left_walker.pos_;
-      while (pos <= right_walker.pos_) {
-        if (trie_->has_child(pos)) {
-          queue.push(trie_->child_pos(pos));
-        }
-        pos++;
-      }
-    }
-  }
-#endif
-
  private:
   // optimize node at position pos
   // @require: all descendents must have been optimized
@@ -134,7 +94,6 @@ class CoCoOptimizer {
     uint32_t root_id = trie_->topo_.node_id(left);
     state_t best_state;
     state_t &state = states_[root_id];
-    // DEBUG( printf("optimize node %d:%d, %d\n", left, right, root_id); )
 
     key_type min_key, max_key;  // universe
     bool min_key_found = false, max_key_found = false;
@@ -268,10 +227,6 @@ class CoCoOptimizer {
       uint32_t num_macros = 1 + desc_num_macros;
       uint32_t num_leaves = num_full_keys + prefix_key + desc_num_leaves;
       float total_cost = space_cost_total(enc_cost, num_macros, num_leaves);
-      // DEBUG(
-      //   printf("depth %u: best cost = %f, total cost = %f, encoding = %u\n",
-      //          depth, best_cost, total_cost, static_cast<int>(best_encoding));
-      // )
       if (total_cost <= best_cost) {
         best_cost = total_cost;
         best_state.encoding_ = best_encoding;
@@ -280,7 +235,6 @@ class CoCoOptimizer {
         best_state.num_macros_ = num_macros;
         best_state.num_leaves_ = num_leaves;
         best_state.remap_ = remap;
-        // DEBUG( printf("update best state\n"); )
       }
       if (100*total_cost <= (100 + space_relaxation_)*best_cost) {
         state.encoding_ = best_encoding;
@@ -289,7 +243,6 @@ class CoCoOptimizer {
         state.num_macros_ = num_macros;
         state.num_leaves_ = num_leaves;
         state.remap_ = remap;
-        // DEBUG( printf("update relaxed state\n"); )
       }
 
       // move to next level
@@ -511,4 +464,4 @@ class CoCoOptimizer {
   template <typename K, typename T> friend class CoCoCC;
 };
 
-#undef DEBUG
+}  // namespace c2

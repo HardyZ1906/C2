@@ -3,6 +3,8 @@
 #include "utils.hpp"
 
 
+namespace c2 {
+
 struct BitVector {
   struct Block {
     uint32_t rank_{0};
@@ -504,3 +506,5 @@ struct BitVector {
   friend struct Select1Index;
   friend struct Select0Index;
 };
+
+}  // namespace c2

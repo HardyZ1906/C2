@@ -5,6 +5,8 @@
 #include <vector>
 
 
+namespace c2 {
+
 class LoudsSparseCC {
  private:
   struct BitVector {
@@ -590,3 +592,5 @@ class LoudsSparseCC {
  private:
   bitvec_t bv_;
 };
+
+}  // namespace c2

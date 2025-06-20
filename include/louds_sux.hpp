@@ -8,6 +8,9 @@
 
 #pragma once
 
+
+namespace c2 {
+
 template<typename rank_support1 = sdsl::rank_support_v<1>,
         typename rank_support00 = sdsl::rank_support_v<0, 2>,
         typename select0_type = sux::bits::SimpleSelectZero<>>
@@ -158,3 +161,5 @@ struct LoudsSux {
     return build_p;
   }
 };
+
+}  // namespace c2

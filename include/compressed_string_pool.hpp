@@ -18,8 +18,9 @@
 #include "../lib/ds2i/succinct/vbyte.hpp"
 #include "../lib/ds2i/succinct/mapper.hpp"
 
-
+namespace c2 {
 template <typename K> class RepairStringPool;
+}
 
 namespace succinct {
 namespace tries {
@@ -216,7 +217,7 @@ namespace tries {
         void release_positions() {
             elias_fano().swap(m_positions);
         }
-        template <typename K> friend class ::RepairStringPool;
+        template <typename K> friend class c2::RepairStringPool;
     };
 
 }

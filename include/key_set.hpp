@@ -3,6 +3,9 @@
 #include "utils.hpp"
 
 
+
+namespace c2 {
+
 template <typename Key>
 struct KeySet {
   using key_type = Key;
@@ -181,10 +184,22 @@ struct KeySet {
               });
   }
 
+  // must be sorted; return size after deduplication
+  auto deduped_size() const -> size_t {
+    size_t ret = 0;
+    const Fragment *next = nullptr;
+    for (size_t i = fragments_.size(); i > 0; i--) {
+      const KeySet<key_type>::Fragment &cur = fragments_[i - 1];
+      if (next == nullptr || cur != *next) {
+        ret += cur.size() + 1;  // key + terminator
+      }
+    }
+    return ret;
+  }
+
   // must be sorted; returns {total size of lcp, size after sorting and deduplication}
   auto lcp_size() const -> std::pair<size_t, size_t> {
     size_t total_lcp = 0, sorted_size = 0;
-
     const Fragment *next = nullptr;
     for (size_t i = fragments_.size(); i > 0; i--) {
       const KeySet<key_type>::Fragment &cur = fragments_[i - 1];
@@ -208,4 +223,34 @@ struct KeySet {
   void reverse() {
     reverse_ = !reverse_;
   }
+
+  void set_reverse(bool rev) {
+    reverse_ = rev;
+  }
+
+  auto make_sample(size_t sample_size, bool sort_rev = false) const -> KeySet<key_type> {
+    if (sample_size*2 >= space_cost()) {
+      return KeySet<key_type>(*this);
+    }
+    KeySet<key_type> sample;
+    size_t sampled_len = (size() + 63) / 64 + 1;
+    auto sampled = new uint64_t[sampled_len];
+    memset(sampled, 0, sampled_len*sizeof(uint64_t));
+    size_t cur_size = 0;
+    while (cur_size < sample_size) {
+      size_t i = std::rand() % size();
+      if (!GET_BIT(sampled[i/64], i%64)) {
+        SET_BIT(sampled[i/64], i%64);
+        sample.push_back(fragments_[i], true);
+        cur_size += fragments_[i].size();
+      }
+    }
+    if (sort_rev) {
+      sample.reverse();
+      sample.sort();
+    }
+    return sample;
+  }
 };
+
+}

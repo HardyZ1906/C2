@@ -7,12 +7,7 @@
 #include <cassert>
 
 
-#ifdef __DEBUG__
-# define DEBUG(foo) foo
-#else
-# define DEBUG(foo)
-#endif
-
+namespace c2 {
 
 template <typename Value>
 class StaticVector {
@@ -133,4 +128,4 @@ class StaticVector {
   value_type *values_{nullptr};
 };
 
-#undef DEBUG
+}  // namespace c2

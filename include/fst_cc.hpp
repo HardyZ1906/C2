@@ -12,20 +12,7 @@
 #include <queue>
 
 
-// #define __DEBUG_FST__
-#ifdef __DEBUG_FST__
-# define DEBUG(foo) foo
-#else
-# define DEBUG(foo)
-#endif
-
-// #define __BENCH_FST__
-#ifdef __BENCH_FST__
-# define BENCH(foo) foo
-#else
-# define BENCH(foo)
-#endif
-
+namespace c2 {
 
 // louds-sparse trie used for building CoCo-trie
 template <typename Key>
@@ -38,19 +25,6 @@ class FstCC {
   using bitvec_t = BitVector;
 
   static constexpr uint32_t link_cutoff_ = 4;  // suffixes of length above this value will be moved to string pool
-
-#ifdef __BENCH_FST__
-  static uint64_t build_trie_time_;
-  static uint64_t build_tail_time_;
-#endif
-  static void print_bench() {
-  #ifdef __BENCH_FST__
-    printf("build trie: %lf ms, build tail: %lf ms\n",
-           (double)build_trie_time_/1000000, (double)build_tail_time_/1000000);
-  #else
-    printf("disabled\n");
-  #endif
-  }
 
   void print_space_cost_breakdown() const {
     size_t topo = topo_.size_in_bits();
@@ -240,7 +214,7 @@ class FstCC {
     ~TempStringPool() = default;
 
     void build(const KeySet<key_type> &key_set, std::vector<uint8_t> *partial_links,
-               size_t original_size = 0, int max_recursion = 0, int mask = 0) override {
+               int max_recursion = 0, int mask = 0) override {
       keys_ = key_set;
     }
 
@@ -366,6 +340,9 @@ class FstCC {
     return size_in_bytes() * 8;
   }
 
+  auto trie_size_in_bits() const -> size_t {
+    return (labels_.size_in_bytes() + topo_.size_in_bytes() + is_link_.size_in_bytes()) * 8;
+  }
  private:
   void build(const KeySet<key_type> &key_set, bool temp = false,
              int max_recursion = 0, int mask = 0) {
@@ -392,13 +369,11 @@ class FstCC {
       return range.lcp_ == key_set[range.end_ - 1].length_ - range.depth_;
     };
 
-    BENCH( auto t0 = std::chrono::high_resolution_clock::now(); )
     std::queue<Range> queue;
     queue.push(Range(0, key_set.size(), 0, lcp(0, key_set.size(), 0)));
     while (!queue.empty()) {
       auto range = queue.front();
       queue.pop();
-      DEBUG( printf("range (%d, %d, %d)\n", range.begin_, range.end_, range.depth_); )
       assert(range.begin_ < range.end_);
 
       uint64_t has_child[4]{0};    // each range corresponds to a node
@@ -434,8 +409,6 @@ class FstCC {
         end++;
       }
       if (end > begin) {
-        DEBUG( printf("range (%d, %d, %d): (terminator)\n", begin, end, range.depth_); )
-        DEBUG( printf("key ID %d: %s\n", is_link_.size(), key_set.materialize(begin).c_str()); )
         num_branches++;
         is_link_.append0();
         labels_.emplace_back(terminator_);
@@ -449,7 +422,6 @@ class FstCC {
           }
           end++;
         }
-        DEBUG( printf("horizontal expansion (%d, %d, %d, %c)\n", begin, end, range.depth_, key_set.get_label(begin, range.depth_)); )
         assert(end > begin);
 
         labels_.emplace_back(key_set.get_label(begin, range.depth_));
@@ -459,7 +431,6 @@ class FstCC {
           SET_BIT(has_child[num_branches / 64], num_branches % 64);
           queue.push(Range(begin, end, depth, lcp(begin, end, depth)));
         } else {
-          DEBUG( printf("key ID %d: %s\n", is_link_.size(), key_set.materialize(begin).c_str()); )
           is_link_.append0();
         }
         num_branches++;
@@ -470,18 +441,14 @@ class FstCC {
     topo_.build();
     is_link_.build();
     labels_.shrink_to_fit();
-    BENCH( auto t1 = std::chrono::high_resolution_clock::now(); )
 
     if (!temp) {
-      next_ = strpool_t::build_optimal(suffixes, nullptr, key_set.space_cost(), max_recursion, mask);
+      next_ = strpool_t::build_optimal(suffixes, nullptr, trie_size_in_bits(), max_recursion, mask);
     } else {
       auto temp = new TempStringPool();
       temp->build(std::move(suffixes));
       next_ = temp;
     }
-    BENCH( auto t2 = std::chrono::high_resolution_clock::now(); )
-    BENCH( build_trie_time_ += (t1 - t0).count(); )
-    BENCH( build_tail_time_ += (t2 - t1).count(); )
   }
 
   label_vec labels_;
@@ -497,10 +464,4 @@ class FstCC {
   template <typename K, typename T> friend class CoCoCC;
 };
 
-#ifdef __BENCH_FST__
-template <typename K> uint64_t FstCC<K>::build_trie_time_ = 0;
-template <typename K> uint64_t FstCC<K>::build_tail_time_ = 0;
-#endif
-
-#undef DEBUG
-#undef BENCH
+}  // namespace c2

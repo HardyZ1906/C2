@@ -3,6 +3,8 @@
 #include "utils.hpp"
 
 
+namespace c2 {
+
 struct Alphabet {
   uint32_t rank_{0};
   uint8_t  subrank_[4]{0};
@@ -96,3 +98,5 @@ struct Alphabet {
     return rank_;
   }
 };
+
+}  // namespace c2

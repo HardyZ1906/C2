@@ -28,7 +28,7 @@
 
 class FstCCWrapper {  // unified API
  public:
-  using trie_t = FstCC<std::string>;
+  using trie_t = c2::FstCC<std::string>;
 
   __NOINLINE_IF_PROFILE FstCCWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0,
                                      int max_recursion = 0, int mask = 0) {
@@ -43,10 +43,6 @@ class FstCCWrapper {  // unified API
     return trie_.size_in_bits();
   }
 
-  static void print_bench() {
-    trie_t::print_bench();
-  }
-
   void print_space_cost_breakdown() const {
     trie_.print_space_cost_breakdown();
   }
@@ -56,7 +52,7 @@ class FstCCWrapper {  // unified API
 
 class CoCoCCWrapper {  // unified API
  public:
-  using trie_t = CoCoCC<std::string>;
+  using trie_t = c2::CoCoCC<std::string>;
 
   __NOINLINE_IF_PROFILE CoCoCCWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0,
                                       int max_recursion = 0, int mask = 0)
@@ -70,10 +66,6 @@ class CoCoCCWrapper {  // unified API
     return trie_.size_in_bits();
   }
 
-  static void print_bench() {
-    trie_t::print_bench();
-  }
-
   void print_space_cost_breakdown() const {
     trie_.print_space_cost_breakdown();
   }
@@ -83,7 +75,7 @@ class CoCoCCWrapper {  // unified API
 
 class CoCoLSWrapper {  // unified API
  public:
-  using trie_t = CoCoCC<std::string, LoudsSparseCC>;
+  using trie_t = c2::CoCoCC<std::string, c2::LoudsSparseCC>;
 
   __NOINLINE_IF_PROFILE CoCoLSWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0,
                                       int max_recursion = 0, int mask = 0)
@@ -97,10 +89,6 @@ class CoCoLSWrapper {  // unified API
     return trie_.size_in_bits();
   }
 
-  static void print_bench() {
-    trie_t::print_bench();
-  }
-
   void print_space_cost_breakdown() const {
     trie_.print_space_cost_breakdown();
   }
@@ -110,7 +98,7 @@ class CoCoLSWrapper {  // unified API
 
 class CoCoSuxWrapper {  // unified API
  public:
-  using trie_t = CoCoCC<std::string, LoudsSux<>>;
+  using trie_t = c2::CoCoCC<std::string, c2::LoudsSux<>>;
 
   __NOINLINE_IF_PROFILE CoCoSuxWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0,
                                        int max_recursion = 0, int mask = 0)
@@ -124,10 +112,6 @@ class CoCoSuxWrapper {  // unified API
     return trie_.size_in_bits();
   }
 
-  static void print_bench() {
-    trie_t::print_bench();
-  }
-
   void print_space_cost_breakdown() const {
     trie_.print_space_cost_breakdown();
   }
@@ -137,7 +121,7 @@ class CoCoSuxWrapper {  // unified API
 
 class MarisaCCWrapper {  // unified API
  public:
-  using trie_t = MarisaCC<std::string>;
+  using trie_t = c2::MarisaCC<std::string>;
 
   __NOINLINE_IF_PROFILE MarisaCCWrapper(const std::vector<std::string> &keys, uint32_t space_relaxation = 0,
                                         int max_recursion = 0, int mask = 0) {
@@ -150,10 +134,6 @@ class MarisaCCWrapper {  // unified API
 
   auto space_cost() const -> size_t {
     return trie_.size_in_bits();
-  }
-
-  static void print_bench() {
-    trie_t::print_bench();
   }
 
   void print_space_cost_breakdown() const {
@@ -169,6 +149,7 @@ void __attribute__((noinline)) query_trie(const std::vector<std::string> &keys, 
   std::unordered_set<uint32_t> key_ids;
 #endif
   for (uint32_t i = 0; i < keys.size(); i++) {
+    // printf("%d: %s\n", i, keys[i].c_str());
     volatile uint32_t key_id = trie.lookup(keys[i]);
   #ifdef __CORRECTNESS_TEST__
     uint32_t id = key_id;
@@ -195,7 +176,7 @@ void __attribute__((noinline)) test_trie(const char *filename, uint32_t space_re
     keys.emplace_back(key);
     original_size += key.size();
   }
-  double original_size_in_mb = (double)original_size/mb_bytes;
+  double original_size_in_mb = (double)original_size/c2::mb_bytes;
   std::sort(keys.begin(), keys.end());
   auto new_end = std::unique(keys.begin(), keys.end());
   keys.erase(new_end, keys.end());
@@ -211,7 +192,7 @@ void __attribute__((noinline)) test_trie(const char *filename, uint32_t space_re
   printf("build time: %lf ms (%lf ns per key)\n", build_time, (double)duration/keys.size());
 
   size_t space_cost = trie.space_cost();
-  double size_in_mb = (double)space_cost/mb_bits;
+  double size_in_mb = (double)space_cost/c2::mb_bits;
   printf("space cost: %lf MB (%lf%% of original size %lf MB)\n", size_in_mb,
          size_in_mb/original_size_in_mb*100, original_size_in_mb);
 
@@ -233,108 +214,10 @@ void __attribute__((noinline)) test_trie(const char *filename, uint32_t space_re
   double avg_latency = (double)duration/keys.size();
   printf("Done!\n");
   printf("total time: %lf ms, avg latency: %lf ns\n", (double)duration/1000000, avg_latency);
-  trie_t::print_bench();
   trie.print_space_cost_breakdown();
 
   printf("%lf,%lf,%lf\n", build_time, size_in_mb, avg_latency);
   printf("[PASSED]\n");
-}
-
-void test_repair(const std::string &filename, size_t trim) {
-  std::ifstream file(filename);
-  std::vector<std::string> keys;
-  std::string line;
-  while (std::getline(file, line)) {
-    keys.emplace_back(line);
-  }
-
-  size_t size_before = 0, count = 0;
-  std::vector<uint8_t> concat;
-  for (const auto &key : keys) {
-    if (key.size() > trim) {
-      size_before += key.size() - trim;
-      concat.insert(concat.end(), key.begin() + trim, key.end());
-      concat.insert(concat.end(), terminator_);
-      count++;
-    }
-  }
-  double avg_key_len = 1.*size_before / count;
-  size_before *= 8;
-  auto start = std::chrono::high_resolution_clock::now();
-  RepairStringPool<std::string> pool;
-  pool.build(concat);
-  auto end = std::chrono::high_resolution_clock::now();
-  size_t size_after = pool.size_in_bits();
-  printf("build time: %lf ms, avg key length: %lf, size before: %lf MB, size after: %lf MB\n",
-         (double)(end - start).count()/1000000, avg_key_len, (double)size_before/mb_bits, (double)size_after/mb_bits);
-}
-
-template <typename T>
-void test_compression(const std::string &filename, bool sort_rev = false) {
-  std::ifstream file(filename);
-  std::vector<std::string> keys;
-  KeySet<std::string> key_set;
-  std::string line;
-
-  while (std::getline(file, line)) {
-    keys.emplace_back(std::move(line));
-  }
-  printf("Processing dataset...\n");
-  for (const auto &key : keys) {
-    key_set.emplace_back(&key);
-  }
-  if (sort_rev) {
-    auto t0 = std::chrono::high_resolution_clock::now();
-    key_set.reverse();
-    key_set.sort();
-    auto t1 = std::chrono::high_resolution_clock::now();
-    printf("sort time: %lf ms\n", (double)(t1 - t0).count()/1000000);
-  }
-  printf("Done!\n");
-
-  printf("Compressing...\n");
-  auto t0 = std::chrono::high_resolution_clock::now();
-  T dict;
-  dict.build(key_set);
-  auto t1 = std::chrono::high_resolution_clock::now();
-  double original_size = (double)key_set.space_cost()/mb_bytes;
-  double compressed_size = (double)dict.size_in_bytes()/mb_bytes;
-  printf("Done!\n");
-  printf("build time: %lf ms\n", (double)(t1 - t0).count()/1000000);
-  printf("original size: %lf MB, compressed size: %lf MB, compression ratio: %lf%%\n",
-         original_size, compressed_size, 100*compressed_size/original_size);
-
-  std::vector<bool> sampled(key_set.size(), false);
-  KeySet<std::string> sample;
-  size_t sample_size = 8*1024*1024, cur_size = 0;
-  double original_sample_size, compressed_sample_size;
-  if (key_set.space_cost() <= sample_size) {
-    original_sample_size = key_set.space_cost();
-  } else {
-    printf("Creating sample...\n");
-    while (cur_size < sample_size) {
-      size_t i = rand() % key_set.size();
-      if (!sampled[i]) {
-        sampled[i] = true;
-        sample.push_back(key_set[i], true);
-        cur_size += key_set[i].size();
-      }
-    }
-    if (sort_rev) {
-      sample.reverse();
-      sample.sort();
-    }
-    printf("Done!\n");
-
-    printf("Compressing sample...\n");
-    T dict_sample;
-    dict_sample.build(sample);
-    original_sample_size = (double)sample.space_cost() / mb_bytes;
-    compressed_sample_size = (double)dict_sample.size_in_bytes() / mb_bytes;
-    printf("Done!\n");
-  }
-  printf("sample size: %lf MB, compressed sample size: %lf MB, sample compression ratio: %lf%%\n",
-         original_sample_size, compressed_sample_size, 100*compressed_sample_size/original_sample_size);
 }
 
 #ifdef __COMPARE_COCO__
@@ -352,12 +235,12 @@ void compare_louds_coco(const std::string &filename, uint32_t space_relaxation, 
   printf("Done!\n");
 
   printf("Building trie...\n");
-  CoCoCC<std::string> trie(keys.begin(), keys.end(), true, space_relaxation, max_recursion, mask);
-  CoCoCC<std::string, LoudsSparseCC> trie_ls(keys.begin(), keys.end(), true, space_relaxation, max_recursion, mask);
+  c2::CoCoCC<std::string> trie(keys.begin(), keys.end(), true, space_relaxation, max_recursion, mask);
+  c2::CoCoCC<std::string, c2::LoudsSparseCC> trie_ls(keys.begin(), keys.end(), true, space_relaxation, max_recursion, mask);
   printf("Done!\n");
 
   printf("Converting to standard LOUDS...\n");
-  std::unique_ptr<LoudsSux<>> louds;
+  std::unique_ptr<c2::LoudsSux<>> louds;
   trie.to_louds_sux(louds);
   printf("Done!\n");
 
@@ -522,12 +405,12 @@ void compare_louds_marisa(const std::string &filename, int max_recursion, int ma
   printf("Done!\n");
 
   printf("Building trie...\n");
-  MarisaCC<std::string, false> trie;
+  c2::MarisaCC<std::string, false> trie;
   trie.build(keys.begin(), keys.end(), true, max_recursion, mask);
   printf("Done!\n");
 
   printf("Converting to standard LOUDS...\n");
-  std::unique_ptr<LoudsMarisa> louds;
+  std::unique_ptr<c2::LoudsMarisa> louds;
   trie.to_louds_marisa(louds);
   printf("Done!\n");
 
@@ -684,49 +567,6 @@ void compare_louds_marisa(const std::string &filename, int max_recursion, int ma
 }
 #endif
 
-void benchmark_bv() {
-  BitVector bv;
-  static constexpr int size = 1000000;
-  uint64_t bits[size];
-  std::mt19937 gen{1};
-  std::uniform_int_distribution<uint64_t> dist;
-  for (int i = 0; i < size; i++) {
-    bits[i] = dist(gen);
-  }
-  bv.load_bits(bits, 0, 1000000*8);
-  bv.build();
-
-  std::vector<int> queries(size);
-  for (int i = 0; i < size; i++) {
-    queries[i] = i;
-  }
-  std::shuffle(queries.begin(), queries.end(), std::mt19937{2});
-
-  auto start = std::chrono::high_resolution_clock::now();
-  for (auto i : queries) {
-    volatile auto j = bv.rank1(i);
-  }
-  auto end = std::chrono::high_resolution_clock::now();
-  auto duration = (end - start).count();
-  printf("%ld ranks take %lf ms\n", (double)duration/1000000);
-
-  start = std::chrono::high_resolution_clock::now();
-  for (auto i : queries) {
-    volatile auto j = bv.get(i);
-  }
-  end = std::chrono::high_resolution_clock::now();
-  duration = (end - start).count();
-  printf("%ld gets take %lf ms\n", (double)duration/1000000);
-
-  start = std::chrono::high_resolution_clock::now();
-  for (auto i : queries) {
-    asm("");
-  }
-  end = std::chrono::high_resolution_clock::now();
-  duration = (end - start).count();
-  printf("%ld empty loops take %lf ms\n", (double)duration/1000000);
-}
-
 int main(int argc, char *argv[]) {
   assert(argc >= 2);
 
@@ -737,15 +577,15 @@ int main(int argc, char *argv[]) {
 
   switch (choice) {
    case 0:
-    printf("[TEST FST CC]\n");
+    printf("[TEST C2-FST]\n");
     test_trie<FstCCWrapper>(argv[1], space_relaxation, max_recursion, mask);
     break;
    case 1:
-    printf("[TEST COCO CC]\n");
-    test_trie<CoCoCCWrapper>(argv[1], space_relaxation, max_recursion, mask);
+    printf("[TEST C2-CoCo(LOUDS-Sparse)]\n");
+    test_trie<CoCoLSWrapper>(argv[1], space_relaxation, max_recursion, mask);
     break;
    case 2:
-    printf("[TEST MARISA CC]\n");
+    printf("[TEST C2-MARISA]\n");
     test_trie<MarisaCCWrapper>(argv[1], space_relaxation, max_recursion, mask);
     break;
    case 3:
@@ -773,41 +613,25 @@ int main(int argc, char *argv[]) {
     test_trie<CArtWrapper>(argv[1], space_relaxation, max_recursion, mask);
     break;
    case 9:
-    printf("[TEST CoCo(LOUDS-Sparse)]\n");
-    test_trie<CoCoLSWrapper>(argv[1], space_relaxation, max_recursion, mask);
+    printf("[TEST C2-COCO(LOUDS)]\n");
+    test_trie<CoCoCCWrapper>(argv[1], space_relaxation, max_recursion, mask);
     break;
    case 10:
-    printf("[TEST CoCo(Sux)]\n");
+    printf("[TEST C2-CoCo(Sux)]\n");
     test_trie<CoCoSuxWrapper>(argv[1], space_relaxation, max_recursion, mask);
     break;
-   case 11:
-    printf("[TEST REPAIR]\n");
-    test_repair(argv[1], space_relaxation);
-    break;
   #ifdef __COMPARE_COCO__
-   case 12:
+   case 11:
     printf("[COMPARE LOUDS COCO]\n");
     compare_louds_coco(argv[1], space_relaxation, max_recursion, mask);
     break;
   #endif
   #ifdef __COMPARE_MARISA__
-   case 13:
+   case 12:
     printf("[COMPARE LOUDS MARISA]\n");
     compare_louds_marisa(argv[1], max_recursion, mask);
     break;
   #endif
-   case 14:
-    printf("[REPAIR]\n");
-    test_compression<RepairStringPool<std::string>>(argv[1], false);
-    break;
-   case 15:
-    printf("[FSST]\n");
-    test_compression<FsstStringPool<std::string>>(argv[1], true);
-    break;
-   case 16:
-    printf("[SORTED]\n");
-    test_compression<SortedStringPool<std::string>>(argv[1], false);
-    break;
    default:
     printf("unrecognized index; stopped\n");
   }

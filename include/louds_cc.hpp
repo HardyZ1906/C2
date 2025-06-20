@@ -9,6 +9,8 @@
 #endif
 
 
+namespace c2 {
+
 class LoudsCC {
  private:
   static constexpr int spill_threshold_ = 64;
@@ -487,3 +489,5 @@ class LoudsCC {
  private:
   bitvec_t bv_;
 };
+
+}  // namespace c2
